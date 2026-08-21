@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "types": ["chrome"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "entrypoints/**/*.ts", "entrypoints/**/*.tsx", "wxt.config.ts"]
+}
+

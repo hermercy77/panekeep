@@ -1,8 +1,8 @@
 import { defineConfig } from "wxt";
 
 export default defineConfig({
+  manifestVersion: 3,
   manifest: {
-    manifest_version: 3,
     name: "Tab Fridge",
     description: "Local-first browser workspaces for organizing tabs safely.",
     version: "0.1.0",
@@ -14,6 +14,7 @@ export default defineConfig({
       "sessions",
       "sidePanel"
     ],
+    optional_host_permissions: ["http://*/*", "https://*/*"],
     action: {
       default_title: "Open Tab Fridge"
     },
