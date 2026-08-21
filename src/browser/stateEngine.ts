@@ -754,6 +754,7 @@ export class BrowserStateEngine {
     const existingWindows = this.state.windows;
     const existingWorkspaces = this.state.workspaces;
     const existingTabs = this.state.tabs;
+    const allowWindowOrderReconciliation = existingWindows.length === nativeWindows.length;
     const nextWindows: WindowState[] = [];
     const nextWorkspaces: Workspace[] = [];
     const nextTabs: TabRecord[] = [];
@@ -761,10 +762,10 @@ export class BrowserStateEngine {
     for (const [windowIndex, nativeWindow] of nativeWindows.entries()) {
       const nativeWindowId = nativeWindow.id;
       if (nativeWindowId === undefined) continue;
-      const windowKey = createWindowKey(nativeWindowId);
-      const previousWindow = existingWindows.find(
-        (window) => window.nativeId === nativeWindowId || window.key === windowKey
-      );
+      const candidateByNativeId = existingWindows.find((window) => window.nativeId === nativeWindowId);
+      const candidateByOrder = allowWindowOrderReconciliation ? existingWindows[windowIndex] : undefined;
+      const previousWindow = candidateByNativeId ?? candidateByOrder;
+      const windowKey = previousWindow?.key ?? createWindowKey(nativeWindowId);
       nextWindows.push({
         key: windowKey,
         nativeId: nativeWindowId,
@@ -784,7 +785,11 @@ export class BrowserStateEngine {
         if (groupId === undefined) continue;
         const previousWorkspace = existingWorkspaces.find(
           (workspace) => workspace.windowKey === windowKey && workspace.groupId === groupId
-        );
+        ) ?? existingWorkspaces.find((workspace) =>
+          workspace.windowKey === windowKey
+          && workspace.name === (group.title?.trim() || "")
+          && workspace.color === normalizeGroupColor(group.color)
+        ) ?? existingWorkspaces.find((workspace) => workspace.windowKey === windowKey && workspace.order === groupIndex);
         const workspace: Workspace = {
           id: previousWorkspace?.id ?? createWorkspaceId(nativeWindowId, groupId),
           windowKey,
