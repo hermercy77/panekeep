@@ -106,6 +106,7 @@ export class BrowserStateEngine {
   private readonly saver: DebouncedSaver;
   private state: StateSnapshot = cloneSnapshot(EMPTY_STATE);
   private readonly listeners = new Set<StateListener>();
+  private readonly organizationControllers = new Map<string, AbortController>();
   private readonly removeListeners: Array<() => void> = [];
   private syncTimer: ReturnType<typeof setTimeout> | undefined;
   private cleanupTimer: ReturnType<typeof setTimeout> | undefined;
@@ -142,6 +143,8 @@ export class BrowserStateEngine {
     if (this.cleanupTimer !== undefined) clearTimeout(this.cleanupTimer);
     this.syncTimer = undefined;
     this.cleanupTimer = undefined;
+    for (const controller of this.organizationControllers.values()) controller.abort();
+    this.organizationControllers.clear();
     for (const remove of this.removeListeners.splice(0)) remove();
     await this.saver.flush();
   }
@@ -591,6 +594,8 @@ export class BrowserStateEngine {
       // undefined response lets the UI adapter use its local preview fallback.
       case "organization.preview":
         return this.organizationPreview(payload);
+      case "organization.cancel":
+        return this.cancelOrganization(payload);
       case "organization.apply":
         return this.applyOrganizationPreview(payload);
       case "backup.export":
@@ -616,13 +621,36 @@ export class BrowserStateEngine {
     if (!eligible.length) throw new Error("没有可整理的标签");
     const config = await loadAIConfig();
     if (!config.apiKey || !config.model) throw new Error("请先在管理页配置 AI API、Key 和模型");
-    return organizeTabs({
-      tabs: eligible,
-      mode,
-      config,
-      existingWorkspaces: this.state.workspaces,
-      getCurrentTabs: () => this.state.tabs.filter((tab) => eligible.some((item) => item.id === tab.id))
-    });
+    const requestId = typeof payload.requestId === "string" && payload.requestId ? payload.requestId : undefined;
+    const controller = new AbortController();
+    if (requestId) {
+      this.organizationControllers.get(requestId)?.abort();
+      this.organizationControllers.set(requestId, controller);
+    }
+    try {
+      return await organizeTabs({
+        tabs: eligible,
+        mode,
+        config,
+        clientOptions: { retry: { timeoutMs: 28_000, maxRetries: 1 } },
+        existingWorkspaces: this.state.workspaces,
+        getCurrentTabs: () => this.state.tabs.filter((tab) => eligible.some((item) => item.id === tab.id)),
+        signal: controller.signal
+      });
+    } finally {
+      if (requestId && this.organizationControllers.get(requestId) === controller) {
+        this.organizationControllers.delete(requestId);
+      }
+    }
+  }
+
+  private cancelOrganization(payload: Record<string, unknown>): { cancelled: boolean } {
+    const requestId = typeof payload.requestId === "string" ? payload.requestId : "";
+    const controller = requestId ? this.organizationControllers.get(requestId) : undefined;
+    if (!controller) return { cancelled: false };
+    controller.abort();
+    this.organizationControllers.delete(requestId);
+    return { cancelled: true };
   }
 
   private async applyOrganizationPreview(payload: Record<string, unknown>): Promise<unknown> {

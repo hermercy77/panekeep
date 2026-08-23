@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { BrowserStateEngine } from "../../src/browser/stateEngine";
 import type { BrowserLike } from "../../src/browser/api";
 import { MemoryStateRepository } from "../../src/storage/repository";
 import { fingerprintTabs } from "../../src/ai";
+import { AI_CONFIG_STORAGE_KEY } from "../../src/ai/config";
 
 type NativeTab = {
   id: number;
@@ -265,5 +266,55 @@ describe("BrowserStateEngine with Chromium state", () => {
     expect(fake.windows[0].tabs[0]).toMatchObject({ id: 101, groupId: 10 });
     expect(fake.removedWindowIds).toEqual([]);
     await engine.stop();
+  });
+
+  it("aborts the matching provider request when the UI cancels an organization job", async () => {
+    const fake = new FakeBrowser([
+      { id: 1, type: "normal", focused: true, tabs: [tab(101, 1, { active: true })] }
+    ], []);
+    const previousChrome = (globalThis as typeof globalThis & { chrome?: unknown }).chrome;
+    const previousFetch = globalThis.fetch;
+    let observedSignal: AbortSignal | undefined;
+    (globalThis as typeof globalThis & { chrome?: unknown }).chrome = {
+      storage: {
+        local: {
+          get: async () => ({
+            [AI_CONFIG_STORAGE_KEY]: {
+              baseUrl: "https://provider.test/v1",
+              apiKey: "sk-test",
+              model: "test-model"
+            }
+          })
+        }
+      }
+    };
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      observedSignal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        observedSignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      });
+    }) as typeof fetch;
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+
+    try {
+      await engine.start();
+      const pending = engine.handleUiAction({
+        action: "organization.preview",
+        payload: { mode: "purpose", tabIds: ["101"], requestId: "request-1" }
+      });
+      await vi.waitFor(() => expect(observedSignal).toBeDefined());
+
+      await expect(engine.handleUiAction({
+        action: "organization.cancel",
+        payload: { requestId: "request-1" }
+      })).resolves.toEqual({ cancelled: true });
+      expect(observedSignal?.aborted).toBe(true);
+      await expect(pending).rejects.toMatchObject({ code: "aborted" });
+    } finally {
+      await engine.stop();
+      globalThis.fetch = previousFetch;
+      if (previousChrome === undefined) delete (globalThis as typeof globalThis & { chrome?: unknown }).chrome;
+      else (globalThis as typeof globalThis & { chrome?: unknown }).chrome = previousChrome;
+    }
   });
 });

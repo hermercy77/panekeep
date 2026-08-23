@@ -16,6 +16,8 @@ import {
 } from "./model";
 
 const DEFAULT_WORKSPACE_COLOR = "slate";
+export const ORGANIZATION_PREVIEW_BATCH_SIZE = 50;
+export const ORGANIZATION_PREVIEW_TIMEOUT_MS = 59_000;
 
 function now(): number {
   return Date.now();
@@ -74,6 +76,28 @@ function getBrowserStateEvents(): BrowserEventLike[] {
 
 function isNoReceiverError(error: unknown): boolean {
   return /receiving end does not exist|could not establish connection|message port closed/i.test(String(error));
+}
+
+async function withTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  message: string,
+  onTimeout?: () => void
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          onTimeout?.();
+          reject(new Error(message));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
 }
 
 function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabFridgeAdapter {
@@ -281,7 +305,23 @@ export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdap
       if (result === undefined) await callFallback((adapter) => adapter.activateTab(tabId));
     },
     async requestOrganization(mode, tabIds) {
-      const result = await bridge("organization.preview", { mode, tabIds });
+      const requestId = makeId("organization");
+      let requestedCount = tabIds?.length ?? 0;
+      if (requestedCount === 0) {
+        const refreshed = normalizeSnapshot(await bridge("refresh"));
+        const latest = refreshed ?? await callFallback((adapter) => adapter.getSnapshot());
+        requestedCount = latest.tabs.filter((tab) => tab.kind === "normal" && !tab.pinned && tab.workspaceId === null).length;
+      }
+      const batches = Math.max(1, Math.ceil(Math.max(1, requestedCount) / ORGANIZATION_PREVIEW_BATCH_SIZE));
+      const timeoutMs = batches * ORGANIZATION_PREVIEW_TIMEOUT_MS;
+      const result = await withTimeout(
+        bridge("organization.preview", { mode, tabIds, requestId }),
+        timeoutMs,
+        batches === 1
+          ? "AI 整理超过 59 秒，请稍后重试或更换响应更快的模型"
+          : `AI 整理超过 ${batches * 59} 秒，请减少本次标签数量后重试`,
+        () => { void bridge("organization.cancel", { requestId }).catch(() => undefined); }
+      );
       if (result && typeof result === "object" && "groups" in result) return result as OrganizationPreview;
       throw new Error("请先配置 AI API，再开始整理");
     },
