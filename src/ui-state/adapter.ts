@@ -40,6 +40,38 @@ function getRuntime(): {
   return runtime ?? null;
 }
 
+interface BrowserEventLike {
+  addListener?: (listener: (...args: unknown[]) => void) => void;
+  removeListener?: (listener: (...args: unknown[]) => void) => void;
+}
+
+function getBrowserStateEvents(): BrowserEventLike[] {
+  const scope = globalThis as typeof globalThis & {
+    chrome?: { tabs?: Record<string, BrowserEventLike>; windows?: Record<string, BrowserEventLike>; tabGroups?: Record<string, BrowserEventLike> };
+    browser?: { tabs?: Record<string, BrowserEventLike>; windows?: Record<string, BrowserEventLike>; tabGroups?: Record<string, BrowserEventLike> };
+  };
+  const browser = scope.chrome ?? scope.browser;
+  if (!browser) return [];
+  const events: Array<BrowserEventLike | undefined> = [
+    browser.tabs?.onCreated as BrowserEventLike | undefined,
+    browser.tabs?.onRemoved as BrowserEventLike | undefined,
+    browser.tabs?.onUpdated as BrowserEventLike | undefined,
+    browser.tabs?.onMoved as BrowserEventLike | undefined,
+    browser.tabs?.onActivated as BrowserEventLike | undefined,
+    browser.tabs?.onAttached as BrowserEventLike | undefined,
+    browser.tabs?.onDetached as BrowserEventLike | undefined,
+    browser.tabs?.onReplaced as BrowserEventLike | undefined,
+    browser.windows?.onCreated as BrowserEventLike | undefined,
+    browser.windows?.onRemoved as BrowserEventLike | undefined,
+    browser.windows?.onFocusChanged as BrowserEventLike | undefined,
+    browser.tabGroups?.onCreated as BrowserEventLike | undefined,
+    browser.tabGroups?.onRemoved as BrowserEventLike | undefined,
+    browser.tabGroups?.onUpdated as BrowserEventLike | undefined,
+    browser.tabGroups?.onMoved as BrowserEventLike | undefined
+  ];
+  return events.filter((event): event is BrowserEventLike => Boolean(event?.addListener));
+}
+
 function isNoReceiverError(error: unknown): boolean {
   return /receiving end does not exist|could not establish connection|message port closed/i.test(String(error));
 }
@@ -272,8 +304,22 @@ export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdap
     subscribe(listener) {
       const unsubscribeFallback = fallback.subscribe?.(listener) ?? (() => undefined);
       const runtime = getRuntime();
+      const browserEvents = getBrowserStateEvents();
+      let refreshWatchdog: ReturnType<typeof setTimeout> | undefined;
+      const clearRefreshWatchdog = () => {
+        if (refreshWatchdog !== undefined) clearTimeout(refreshWatchdog);
+        refreshWatchdog = undefined;
+      };
+      const scheduleRefreshWatchdog = () => {
+        clearRefreshWatchdog();
+        refreshWatchdog = setTimeout(() => {
+          refreshWatchdog = undefined;
+          void bridge("refresh").catch(() => undefined);
+        }, 400);
+      };
       const onMessage = (message: unknown): false => {
         if (!isStateUpdatedMessage(message)) return false;
+        clearRefreshWatchdog();
         const snapshot = normalizeSnapshot(message.snapshot);
         if (!snapshot) return false;
         const replace = (fallback as TabFridgeAdapter & { replaceSnapshot?: (next: TabFridgeSnapshot) => void }).replaceSnapshot;
@@ -281,7 +327,10 @@ export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdap
         return false;
       };
       runtime?.onMessage?.addListener?.(onMessage);
+      for (const event of browserEvents) event.addListener?.(scheduleRefreshWatchdog);
       return () => {
+        clearRefreshWatchdog();
+        for (const event of browserEvents) event.removeListener?.(scheduleRefreshWatchdog);
         runtime?.onMessage?.removeListener?.(onMessage);
         unsubscribeFallback();
       };
