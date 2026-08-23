@@ -60,6 +60,10 @@ function workspaceMatches(workspace: Workspace, query: string, workspaceTag: str
   return haystack.includes(query.trim().toLowerCase());
 }
 
+function workspaceTagMatches(workspace: Workspace, workspaceTag: string): boolean {
+  return !workspaceTag || workspace.tags.includes(workspaceTag);
+}
+
 function windowLabel(window: WindowState, index: number): string {
   return window.name.trim() || `窗口 ${index + 1}`;
 }
@@ -264,7 +268,9 @@ export function TabTree({
         const windowTabs = snapshot.tabs.filter((tab) => tab.windowKey === window.key);
         const fixedTabs = windowTabs.filter((tab) => tab.kind !== "special" && (tab.pinned || tab.kind === "fixed")).filter((tab) => tabMatches(tab, query, filter));
         const specialTabs = windowTabs.filter((tab) => tab.kind === "special").filter((tab) => tabMatches(tab, query, filter));
-        const workspaces = sortWorkspaces(snapshot.workspaces.filter((workspace) => workspace.windowKey === window.key && workspaceMatches(workspace, query, workspaceTag)));
+        const workspaces = sortWorkspaces(snapshot.workspaces.filter(
+          (workspace) => workspace.windowKey === window.key && workspaceTagMatches(workspace, workspaceTag)
+        ));
         const unclassified = windowTabs
           .filter((tab) => tab.kind === "normal" && !tab.pinned && tab.workspaceId === null)
           .filter((tab) => tabMatches(tab, query, filter));

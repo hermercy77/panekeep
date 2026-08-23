@@ -105,4 +105,38 @@ describe("TabTree drag and drop", () => {
 
     await act(async () => root.unmount());
   });
+
+  it("keeps a workspace visible when the query matches one of its tabs", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        <TabTree
+          snapshot={snapshot}
+          query="example.com/a"
+          filter="all"
+          windowScope="all"
+          workspaceTag=""
+          expandedWindows={new Set(["window:1"])}
+          expandedWorkspaces={new Set(["ws-a", "ws-b"])}
+          selectedTabId={null}
+          onToggleWindow={vi.fn()}
+          onToggleWorkspace={vi.fn()}
+          onActivateTab={vi.fn()}
+          onMoveTab={vi.fn()}
+          onMoveWorkspace={vi.fn()}
+          onEditWorkspace={vi.fn()}
+          onDeleteWorkspace={vi.fn()}
+          onCreateWorkspace={vi.fn()}
+        />
+      );
+    });
+
+    expect(host.textContent).toContain("项目 A 标签");
+    expect(host.textContent).not.toContain("项目 B");
+
+    await act(async () => root.unmount());
+  });
 });
