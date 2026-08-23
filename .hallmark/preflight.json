@@ -1,12 +1,11 @@
 {
   "scannedAt": "2026-08-23",
   "framework": "WXT + React + TypeScript",
-  "fontStack": "Inter and system UI only",
-  "palette": "cool neutral surfaces with a warm orange accent; many inline hex values",
+  "fontStack": "Space Grotesk Variable + IBM Plex Sans Variable + JetBrains Mono Variable",
+  "palette": "locked Cobalt OKLCH light/dark tokens in tokens.css",
   "motion": "motion-cut; no motion library",
-  "spacing": "ad hoc pixel values",
-  "designSystem": null,
-  "preserve": ["routes", "component ownership", "copy intent", "business logic"],
-  "introduce": ["Cobalt tokens", "font pairing", "Workbench app structure", "state discipline"]
+  "spacing": "locked 4-point named scale in tokens.css",
+  "designSystem": "design.md",
+  "preserve": ["routes", "component ownership", "copy intent", "business logic", "Cobalt theme", "Workbench structure"],
+  "introduce": ["stronger window/workspace/tab-type hierarchy", "explicit structural dividers"]
 }
-

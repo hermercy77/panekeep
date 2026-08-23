@@ -1,5 +1,5 @@
 import { useMemo, type DragEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, GripVertical, Inbox, Pencil, Pin, Plus, Rows3, ShieldAlert, Trash2 } from "lucide-react";
+import { AppWindow, ChevronDown, ChevronRight, GripVertical, Inbox, Pencil, Pin, Plus, Rows3, ShieldAlert, Trash2 } from "lucide-react";
 import type { TabRecord, WindowState, Workspace } from "../shared/contracts";
 import { tabHost, tabLabel } from "../ui-state/model";
 import type { TabFridgeSnapshot } from "../ui-state/model";
@@ -27,6 +27,13 @@ interface TabTreeProps {
 }
 
 type DragPayload = { type: "tab" | "workspace"; id: string };
+type TabSectionKind = "fixed" | "unclassified" | "special";
+
+const WORKSPACE_COLORS = new Set(["slate", "blue", "cyan", "green", "amber", "rose", "violet"]);
+
+function workspaceColorName(color: string): string {
+  return WORKSPACE_COLORS.has(color) ? color : "slate";
+}
 
 function parseDrag(event: DragEvent): DragPayload | null {
   const raw = event.dataTransfer.getData("application/x-tab-fridge");
@@ -102,17 +109,19 @@ function SectionHeading({
   icon,
   label,
   count,
+  kind,
   workspaceId,
   onDrop
 }: {
   icon: ReactNode;
   label: string;
   count: number;
+  kind: TabSectionKind;
   workspaceId?: string;
   onDrop?: (event: DragEvent) => void;
 }) {
   return (
-    <div className="section-heading drop-target" onDragOver={onDrop ? (event) => event.preventDefault() : undefined} onDrop={onDrop}>
+    <div className={`section-heading section-heading-${kind} drop-target`} data-level="tab-type" onDragOver={onDrop ? (event) => event.preventDefault() : undefined} onDrop={onDrop}>
       <span className="section-icon">{icon}</span>
       <span>{label}</span>
       <span className="section-count">{count}</span>
@@ -170,10 +179,10 @@ export function TabTree({
           .filter((tab) => tabMatches(tab, query, filter));
         const isExpanded = expandedWindows.has(window.key);
         return (
-          <section className={window.isCurrent ? "window-section current" : "window-section"} key={window.key}>
+          <section className={window.isCurrent ? "window-section current" : "window-section"} data-level="window" key={window.key}>
             <button className="window-heading" type="button" onClick={() => onToggleWindow(window.key)} aria-expanded={isExpanded}>
               <span className="tree-chevron">{isExpanded ? <ChevronDown aria-hidden="true" size={15} /> : <ChevronRight aria-hidden="true" size={15} />}</span>
-              <span className="window-icon"><Rows3 aria-hidden="true" size={14} /></span>
+              <span className="window-icon"><AppWindow aria-hidden="true" size={14} /></span>
               <span className="window-name">{windowLabel(window, windowIndex)}</span>
               {window.isCurrent ? <span className="current-pill">当前</span> : null}
               <span className="window-count">{windowTabs.length}</span>
@@ -181,7 +190,7 @@ export function TabTree({
             {isExpanded ? (
               <div className="window-children">
                 <div className="tree-section">
-                  <SectionHeading icon={<Pin aria-hidden="true" size={14} />} label="固定标签" count={fixedTabs.length} />
+                  <SectionHeading icon={<Pin aria-hidden="true" size={14} />} label="固定标签" count={fixedTabs.length} kind="fixed" />
                   {fixedTabs.map((tab) => (
                     <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => writeDrag(event, { type: "tab", id: tab.id })} />
                   ))}
@@ -198,7 +207,8 @@ export function TabTree({
                   const workspaceExpanded = expandedWorkspaces.has(workspace.id);
                   return (
                     <div
-                      className="tree-section workspace-section"
+                      className={`tree-section workspace-section workspace-accent-${workspaceColorName(workspace.color)}`}
+                      data-level="workspace"
                       key={workspace.id}
                       draggable
                       onDragStart={(event) => writeDrag(event, { type: "workspace", id: workspace.id })}
@@ -215,7 +225,8 @@ export function TabTree({
                         <button className="workspace-heading" type="button" onClick={() => onToggleWorkspace(workspace.id)} aria-expanded={workspaceExpanded}>
                           <GripVertical className="drag-handle" aria-hidden="true" size={14} />
                           <span className="tree-chevron">{workspaceExpanded ? <ChevronDown aria-hidden="true" size={14} /> : <ChevronRight aria-hidden="true" size={14} />}</span>
-                          <span className={`workspace-dot workspace-dot-${workspace.color || "slate"}`} aria-hidden="true" />
+                          <span className={`workspace-dot workspace-dot-${workspaceColorName(workspace.color)}`} aria-hidden="true" />
+                          <span className="workspace-level">工作区</span>
                           <span className="workspace-name">{workspace.name}</span>
                           <span className="workspace-count">{workspaceTabs.length}</span>
                         </button>
@@ -248,6 +259,7 @@ export function TabTree({
                     icon={<Inbox aria-hidden="true" size={14} />}
                     label="未分类"
                     count={unclassified.length}
+                    kind="unclassified"
                     onDrop={(event) => {
                       event.preventDefault();
                       const payload = parseDrag(event);
@@ -259,7 +271,7 @@ export function TabTree({
                   ))}
                 </div>
                 <div className="tree-section">
-                  <SectionHeading icon={<ShieldAlert aria-hidden="true" size={14} />} label="特殊页面" count={specialTabs.length} />
+                  <SectionHeading icon={<ShieldAlert aria-hidden="true" size={14} />} label="特殊页面" count={specialTabs.length} kind="special" />
                   {specialTabs.map((tab) => (
                     <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => writeDrag(event, { type: "tab", id: tab.id })} />
                   ))}
