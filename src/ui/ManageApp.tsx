@@ -178,7 +178,7 @@ export function ManageApp() {
           <section className="manage-section split-section" id="backup">
             <div className="section-title-row"><div><h2>备份与恢复</h2><p>把窗口、工作区和标签保存为可迁移的 JSON。</p></div></div>
             <div className="backup-card"><div className="backup-icon"><Download aria-hidden="true" size={18} /></div><div><strong>导出 JSON 备份</strong><p>包含 {snapshot.tabs.length} 个标签、{snapshot.workspaces.length} 个工作区和 {snapshot.windows.length} 个窗口。</p></div><button className="button button-ghost" type="button" onClick={() => void exportBackup()}>导出备份</button></div>
-            <div className="backup-card"><div className="backup-icon"><Upload aria-hidden="true" size={18} /></div><div><strong>导入 JSON 备份</strong><p>按备份结构新建窗口，不覆盖当前浏览器状态。</p></div><button className="button button-ghost" type="button" onClick={() => importInput.current?.click()}>选择文件</button><input ref={importInput} type="file" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void importBackup(file); event.currentTarget.value = ""; }} /></div>
+            <div className="backup-card"><div className="backup-icon"><Upload aria-hidden="true" size={18} /></div><div><strong>导入 JSON 备份</strong><p>按备份结构新建窗口，不覆盖当前浏览器状态。</p></div><button className="button button-ghost" type="button" onClick={() => importInput.current?.click()}>选择文件</button><input ref={importInput} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void importBackup(file); event.currentTarget.value = ""; }} /></div>
             {fileError ? <p className="inline-error">{fileError}</p> : null}
             <p className="muted-note">导出的文件不包含 API Key、Cookie、密码或网页正文。</p>
           </section>
