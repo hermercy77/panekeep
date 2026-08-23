@@ -389,7 +389,7 @@ svg { display: block; flex: 0 0 auto; }
   .button-primary:hover { background: var(--color-ink); color: var(--color-paper); }
   .button-ghost:hover { border-color: var(--color-ink-2); }
   .button-ai:hover { color: var(--color-accent-ink); background: var(--color-accent); }
-  .window-heading:hover, .tab-row:hover { background: var(--color-paper-3); }
+  .window-heading:hover, .section-heading:hover, .tab-row:hover { background: var(--color-paper-3); }
   .workspace-heading-row:hover { background: var(--color-paper-2); }
   .workspace-tabs .tab-row:hover { background: var(--color-paper-3); }
   .workspace-heading-row:hover .description-tooltip { visibility: visible; opacity: 1; }

@@ -1,4 +1,4 @@
-import { useMemo, type DragEvent, type ReactNode } from "react";
+import { useMemo, useState, type DragEvent, type ReactNode } from "react";
 import { AppWindow, ChevronDown, ChevronRight, GripVertical, Inbox, Pencil, Pin, Plus, Rows3, ShieldAlert, Trash2 } from "lucide-react";
 import type { TabRecord, WindowState, Workspace } from "../shared/contracts";
 import { tabHost, tabLabel } from "../ui-state/model";
@@ -110,6 +110,8 @@ function SectionHeading({
   label,
   count,
   kind,
+  expanded,
+  onToggle,
   workspaceId,
   onDrop
 }: {
@@ -117,16 +119,27 @@ function SectionHeading({
   label: string;
   count: number;
   kind: TabSectionKind;
+  expanded: boolean;
+  onToggle: () => void;
   workspaceId?: string;
   onDrop?: (event: DragEvent) => void;
 }) {
   return (
-    <div className={`section-heading section-heading-${kind} drop-target`} data-level="tab-type" onDragOver={onDrop ? (event) => event.preventDefault() : undefined} onDrop={onDrop}>
+    <button
+      className={`section-heading section-heading-${kind} drop-target`}
+      type="button"
+      data-level="tab-type"
+      aria-expanded={expanded}
+      onClick={onToggle}
+      onDragOver={onDrop ? (event) => event.preventDefault() : undefined}
+      onDrop={onDrop}
+    >
+      <span className="tree-chevron">{expanded ? <ChevronDown aria-hidden="true" size={14} /> : <ChevronRight aria-hidden="true" size={14} />}</span>
       <span className="section-icon">{icon}</span>
       <span>{label}</span>
       <span className="section-count">{count}</span>
       {workspaceId ? <span className="drop-hint">拖放整理</span> : null}
-    </div>
+    </button>
   );
 }
 
@@ -158,6 +171,7 @@ export function TabTree({
   onDeleteWorkspace,
   onCreateWorkspace
 }: TabTreeProps) {
+  const [collapsedTabSections, setCollapsedTabSections] = useState<Set<string>>(new Set());
   const windows = useMemo(() => {
     if (snapshot.windows.length) return snapshot.windows;
     const keys = [...new Set(snapshot.tabs.map((tab) => tab.windowKey))];
@@ -165,6 +179,16 @@ export function TabTree({
   }, [snapshot.tabs, snapshot.windows]);
   const visibleTabCount = snapshot.tabs.filter((tab) => tabMatches(tab, query, filter)).length;
   const visibleWorkspaceCount = snapshot.workspaces.filter((workspace) => workspaceMatches(workspace, query, workspaceTag)).length;
+  const sectionExpanded = (windowKey: string, kind: TabSectionKind) => !collapsedTabSections.has(`${windowKey}:${kind}`);
+  const toggleSection = (windowKey: string, kind: TabSectionKind) => {
+    const key = `${windowKey}:${kind}`;
+    setCollapsedTabSections((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   return (
     <div className="tree" aria-label="标签树">
@@ -178,6 +202,9 @@ export function TabTree({
           .filter((tab) => tab.kind === "normal" && !tab.pinned && tab.workspaceId === null)
           .filter((tab) => tabMatches(tab, query, filter));
         const isExpanded = expandedWindows.has(window.key);
+        const unclassifiedExpanded = sectionExpanded(window.key, "unclassified");
+        const specialExpanded = sectionExpanded(window.key, "special");
+        const fixedExpanded = sectionExpanded(window.key, "fixed");
         return (
           <section className={window.isCurrent ? "window-section current" : "window-section"} data-level="window" key={window.key}>
             <button className="window-heading" type="button" onClick={() => onToggleWindow(window.key)} aria-expanded={isExpanded}>
@@ -189,12 +216,6 @@ export function TabTree({
             </button>
             {isExpanded ? (
               <div className="window-children">
-                <div className="tree-section">
-                  <SectionHeading icon={<Pin aria-hidden="true" size={14} />} label="固定标签" count={fixedTabs.length} kind="fixed" />
-                  {fixedTabs.map((tab) => (
-                    <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => writeDrag(event, { type: "tab", id: tab.id })} />
-                  ))}
-                </div>
                 {workspaces.filter((workspace) => {
                   if (!query.trim()) return true;
                   if (workspaceMatches(workspace, query, workspaceTag)) return true;
@@ -254,31 +275,53 @@ export function TabTree({
                     </div>
                   );
                 })}
+                <button className="create-workspace-link" type="button" onClick={() => onCreateWorkspace(window.key)}>
+                  <Plus aria-hidden="true" size={14} />新建工作区
+                </button>
                 <div className="tree-section">
                   <SectionHeading
                     icon={<Inbox aria-hidden="true" size={14} />}
                     label="未分类"
                     count={unclassified.length}
                     kind="unclassified"
+                    expanded={unclassifiedExpanded}
+                    onToggle={() => toggleSection(window.key, "unclassified")}
                     onDrop={(event) => {
                       event.preventDefault();
                       const payload = parseDrag(event);
                       if (payload?.type === "tab") onMoveTab(payload.id, null);
                     }}
                   />
-                  {unclassified.map((tab) => (
+                  {unclassifiedExpanded ? unclassified.map((tab) => (
                     <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => writeDrag(event, { type: "tab", id: tab.id })} />
-                  ))}
+                  )) : null}
                 </div>
                 <div className="tree-section">
-                  <SectionHeading icon={<ShieldAlert aria-hidden="true" size={14} />} label="特殊页面" count={specialTabs.length} kind="special" />
-                  {specialTabs.map((tab) => (
+                  <SectionHeading
+                    icon={<ShieldAlert aria-hidden="true" size={14} />}
+                    label="特殊页面"
+                    count={specialTabs.length}
+                    kind="special"
+                    expanded={specialExpanded}
+                    onToggle={() => toggleSection(window.key, "special")}
+                  />
+                  {specialExpanded ? specialTabs.map((tab) => (
                     <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => writeDrag(event, { type: "tab", id: tab.id })} />
-                  ))}
+                  )) : null}
                 </div>
-                <button className="create-workspace-link" type="button" onClick={() => onCreateWorkspace(window.key)}>
-                  <Plus aria-hidden="true" size={14} />新建工作区
-                </button>
+                <div className="tree-section">
+                  <SectionHeading
+                    icon={<Pin aria-hidden="true" size={14} />}
+                    label="固定标签"
+                    count={fixedTabs.length}
+                    kind="fixed"
+                    expanded={fixedExpanded}
+                    onToggle={() => toggleSection(window.key, "fixed")}
+                  />
+                  {fixedExpanded ? fixedTabs.map((tab) => (
+                    <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => writeDrag(event, { type: "tab", id: tab.id })} />
+                  )) : null}
+                </div>
               </div>
             ) : null}
           </section>
