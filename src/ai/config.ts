@@ -67,34 +67,58 @@ function getChromeLocalStorage(): StorageAreaLike | undefined {
   return candidate.chrome?.storage?.local;
 }
 
-function invokeStorage<T>(
-  method: (...args: never[]) => Promise<T> | void,
-  args: unknown[],
-  callbackResult: T
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    let settled = false;
-    const finish = (value: T) => {
-      if (!settled) {
-        settled = true;
-        resolve(value);
-      }
-    };
-
+async function storageGet(storage: StorageAreaLike, keys: string | string[]): Promise<Record<string, unknown>> {
+  try {
+    const result = storage.get(keys);
+    if (result && typeof (result as Promise<Record<string, unknown>>).then === "function") {
+      return await result;
+    }
+  } catch {
+    // Older callback-only implementations are handled below.
+  }
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
     try {
-      const result = method(...([...args, (value: T) => finish(value)] as never[]));
-      if (result && typeof (result as Promise<T>).then === "function") {
-        (result as Promise<T>).then(finish, (error) => {
-          if (!settled) {
-            settled = true;
-            reject(error);
-          }
-        });
-      } else if (method.length <= args.length) {
-        finish(callbackResult);
-      }
+      storage.get(keys, (items) => resolve(items));
     } catch (error) {
-      settled = true;
+      reject(error);
+    }
+  });
+}
+
+async function storageSet(storage: StorageAreaLike, items: Record<string, unknown>): Promise<void> {
+  try {
+    const result = storage.set(items);
+    if (result && typeof (result as Promise<void>).then === "function") {
+      await result;
+      return;
+    }
+  } catch {
+    // Older callback-only implementations are handled below.
+  }
+  await new Promise<void>((resolve, reject) => {
+    try {
+      storage.set(items, () => resolve());
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+async function storageRemove(storage: StorageAreaLike, keys: string | string[]): Promise<void> {
+  if (!storage.remove) return;
+  try {
+    const result = storage.remove(keys);
+    if (result && typeof (result as Promise<void>).then === "function") {
+      await result;
+      return;
+    }
+  } catch {
+    // Older callback-only implementations are handled below.
+  }
+  await new Promise<void>((resolve, reject) => {
+    try {
+      storage.remove?.(keys, () => resolve());
+    } catch (error) {
       reject(error);
     }
   });
@@ -143,11 +167,7 @@ export class LocalAIConfigStore implements AIConfigStore {
   constructor(private readonly storage: StorageAreaLike = defaultStorage()) {}
 
   async load(): Promise<AIConfig> {
-    const items = await invokeStorage<Record<string, unknown>>(
-      this.storage.get.bind(this.storage) as (...args: never[]) => Promise<Record<string, unknown>> | void,
-      [AI_CONFIG_STORAGE_KEY],
-      {}
-    );
+    const items = await storageGet(this.storage, AI_CONFIG_STORAGE_KEY);
     const stored = items[AI_CONFIG_STORAGE_KEY];
     if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
       return { ...DEFAULT_AI_CONFIG };
@@ -157,21 +177,13 @@ export class LocalAIConfigStore implements AIConfigStore {
 
   async save(config: Partial<AIConfig>): Promise<AIConfig> {
     const normalized = normalizeAIConfig(config);
-    await invokeStorage<void>(
-      this.storage.set.bind(this.storage) as (...args: never[]) => Promise<void> | void,
-      [{ [AI_CONFIG_STORAGE_KEY]: normalized }],
-      undefined
-    );
+    await storageSet(this.storage, { [AI_CONFIG_STORAGE_KEY]: normalized });
     return normalized;
   }
 
   async clear(): Promise<void> {
     if (this.storage.remove) {
-      await invokeStorage<void>(
-        this.storage.remove.bind(this.storage) as (...args: never[]) => Promise<void> | void,
-        [AI_CONFIG_STORAGE_KEY],
-        undefined
-      );
+      await storageRemove(this.storage, AI_CONFIG_STORAGE_KEY);
       return;
     }
     await this.save(DEFAULT_AI_CONFIG);

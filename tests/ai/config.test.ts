@@ -20,4 +20,24 @@ describe("local AI config storage", () => {
     await store.clear();
     await expect(store.load()).resolves.toMatchObject({ apiKey: "" });
   });
+
+  it("supports callback-style Chrome storage implementations", async () => {
+    const values: Record<string, unknown> = {};
+    const storage = {
+      get: (_keys?: unknown, callback?: (items: Record<string, unknown>) => void) => {
+        if (callback) queueMicrotask(() => callback(values));
+      },
+      set: (items: Record<string, unknown>, callback?: () => void) => {
+        Object.assign(values, items);
+        if (callback) queueMicrotask(callback);
+      },
+      remove: (key: string | string[], callback?: () => void) => {
+        for (const item of typeof key === "string" ? [key] : key) delete values[item];
+        if (callback) queueMicrotask(callback);
+      }
+    };
+    const store = new LocalAIConfigStore(storage);
+    await store.save({ baseUrl: "https://api.deepseek.com", apiKey: "secret", model: "deepseek-v4-flash" });
+    await expect(store.load()).resolves.toMatchObject({ model: "deepseek-v4-flash", apiKey: "secret" });
+  });
 });
