@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, LayoutGrid, RefreshCw, ScanLine, Target, X } from "lucide-react";
 import type { OrganizationMode, OrganizationPreview, TabRecord } from "../shared/contracts";
 import { tabLabel } from "../ui-state/model";
@@ -33,11 +33,18 @@ export function OrganizationDialog({
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [selectedTabIds, setSelectedTabIds] = useState<Set<string>>(new Set());
   const [draftPreview, setDraftPreview] = useState<OrganizationPreview | null>(null);
+  const wasOpenRef = useRef(false);
   const tabById = new Map(tabs.map((tab) => [tab.id, tab]));
   const selectableTabs = tabs.filter((tab) => (tab.kind === "normal" || tab.kind === "fixed") && !tab.specialReason);
   const unclassifiedIds = selectableTabs.filter((tab) => tab.kind === "normal" && !tab.pinned && tab.workspaceId === null).map((tab) => tab.id);
   useEffect(() => {
-    if (open) setSelectedTabIds(new Set(unclassifiedIds));
+    if (open && !wasOpenRef.current) {
+      setSelectedTabIds(new Set(unclassifiedIds));
+    } else if (open) {
+      const selectableIds = new Set(selectableTabs.map((tab) => tab.id));
+      setSelectedTabIds((current) => new Set([...current].filter((id) => selectableIds.has(id))));
+    }
+    wasOpenRef.current = open;
   }, [open, tabs]);
   useEffect(() => {
     setDraftPreview(preview ? {
