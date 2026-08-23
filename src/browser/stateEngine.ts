@@ -781,10 +781,15 @@ export class BrowserStateEngine {
     const nativeWindows = await this.getNativeWindows();
     let currentWindowId: number | undefined;
     try {
-      const current = await invokeBrowser<NativeWindowLike>(this.api.windows, "getCurrent");
+      const current = await invokeBrowser<NativeWindowLike>(this.api.windows, "getLastFocused", { populate: false });
       currentWindowId = current?.id;
     } catch {
-      currentWindowId = nativeWindows.find((window) => window.focused)?.id;
+      try {
+        const current = await invokeBrowser<NativeWindowLike>(this.api.windows, "getCurrent");
+        currentWindowId = current?.id;
+      } catch {
+        currentWindowId = nativeWindows.find((window) => window.focused)?.id;
+      }
     }
 
     const existingWindows = this.state.windows;

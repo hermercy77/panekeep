@@ -63,6 +63,7 @@ class FakeBrowser {
     this.api = {
       windows: {
         getAll: async () => this.windows.map((window) => ({ ...window, tabs: window.tabs.map((tab) => ({ ...tab })) })),
+        getLastFocused: async () => ({ ...this.windows.find((window) => window.focused) ?? this.windows[0] }),
         getCurrent: async () => ({ ...this.windows.find((window) => window.focused) ?? this.windows[0] }),
         remove: async (windowId: number) => {
           const index = this.windows.findIndex((window) => window.id === windowId);
@@ -197,6 +198,24 @@ describe("BrowserStateEngine with Chromium state", () => {
     expect(fake.windows).toHaveLength(2);
     expect(fake.removedWindowIds).toEqual([]);
     expect(fake.windows.find((window) => window.id === 2)?.tabs.map((item) => item.id)).toEqual([202]);
+    await engine.stop();
+  });
+
+  it("uses the last-focused native window instead of a stale service-worker current window", async () => {
+    const fake = new FakeBrowser([
+      { id: 1, type: "normal", focused: true, tabs: [tab(101, 1, { active: true })] },
+      { id: 2, type: "normal", focused: false, tabs: [tab(201, 2, { active: true })] }
+    ], []);
+    fake.api.windows.getCurrent = async () => ({ id: 1, type: "normal", focused: false });
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+    expect(engine.getState().windows.find((window) => window.isCurrent)?.nativeId).toBe(1);
+
+    fake.windows[0].focused = false;
+    fake.windows[1].focused = true;
+    await engine.syncFromBrowser();
+
+    expect(engine.getState().windows.find((window) => window.isCurrent)?.nativeId).toBe(2);
     await engine.stop();
   });
 
