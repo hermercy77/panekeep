@@ -67,7 +67,8 @@ function sameGroupMetadata(left: OrganizationResponse["groups"][number], right: 
 export function mergeBatchOrganizationResponses(
   batches: readonly BatchOrganizationResult[],
   mode: OrganizationMode,
-  sourceTabIds: readonly string[]
+  sourceTabIds: readonly string[],
+  sourceFingerprint: string
 ): OrganizationPreview {
   const groups: OrganizationResponse["groups"] = [];
   const groupById = new Map<string, OrganizationResponse["groups"][number]>();
@@ -101,7 +102,8 @@ export function mergeBatchOrganizationResponses(
   return validateOrganizationPreview(
     { groups, unclassifiedTabIds },
     mode,
-    sourceTabIds
+    sourceTabIds,
+    sourceFingerprint
   );
 }
 
@@ -142,7 +144,13 @@ export async function organizeTabs(request: OrganizationPipelineRequest): Promis
   }
 
   // Merge and validate only after every batch succeeded; callers never receive partial data.
-  return mergeBatchOrganizationResponses(results, modeResult.data, request.tabs.map((tab) => tab.id));
+  // The fingerprint is added locally and is never part of the provider prompt.
+  return mergeBatchOrganizationResponses(
+    results,
+    modeResult.data,
+    request.tabs.map((tab) => tab.id),
+    expectedSnapshot.fingerprint
+  );
 }
 
 export const runOrganizationPipeline = organizeTabs;

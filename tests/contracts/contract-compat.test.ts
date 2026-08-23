@@ -7,12 +7,14 @@ describe("shared contract compatibility", () => {
     expect(() => organizationPreviewSchema.parse({
       mode: "purpose",
       sourceTabIds: [],
+      sourceFingerprint: "fixture-fingerprint",
       groups: [],
       unclassifiedTabIds: []
     })).not.toThrow();
     expect(() => organizationPreviewSchema.parse({
       mode: "semantic",
       sourceTabIds: [],
+      sourceFingerprint: "fixture-fingerprint",
       groups: [],
       unclassifiedTabIds: []
     })).toThrow();

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BrowserStateEngine } from "../../src/browser/stateEngine";
 import type { BrowserLike } from "../../src/browser/api";
 import { MemoryStateRepository } from "../../src/storage/repository";
+import { fingerprintTabs } from "../../src/ai";
 
 type NativeTab = {
   id: number;
@@ -229,6 +230,40 @@ describe("BrowserStateEngine with Chromium state", () => {
     expect(fake.windows[0].tabs[0].groupId).toBe(-1);
     expect(engine.getState().workspaces).toEqual([]);
     expect(engine.getState().tabs[0]).toMatchObject({ id: "101", workspaceId: null, kind: "normal" });
+    await engine.stop();
+  });
+
+  it("rejects a preview when a selected tab changes before confirmation", async () => {
+    const fake = new FakeBrowser([
+      { id: 1, type: "normal", focused: true, tabs: [tab(101, 1, { groupId: 10, active: true })] }
+    ], [{ id: 10, windowId: 1, title: "Current work", color: "blue" }]);
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+    const before = engine.getState();
+    const workspace = before.workspaces[0];
+    const sourceTabs = before.tabs.filter((item) => item.id === "101");
+    const preview = {
+      mode: "purpose" as const,
+      sourceTabIds: ["101"],
+      sourceFingerprint: fingerprintTabs(sourceTabs),
+      groups: [{
+        id: "existing",
+        name: workspace.name,
+        description: workspace.description,
+        tags: workspace.tags,
+        existingWorkspaceId: workspace.id,
+        tabIds: ["101"]
+      }],
+      unclassifiedTabIds: []
+    };
+
+    fake.windows[0].tabs[0].url = "https://changed.example.test/";
+    await engine.syncFromBrowser();
+
+    await expect(engine.handleUiAction({ action: "organization.apply", payload: { preview } }))
+      .rejects.toThrow("标签在预览后发生了变化");
+    expect(fake.windows[0].tabs[0]).toMatchObject({ id: 101, groupId: 10 });
+    expect(fake.removedWindowIds).toEqual([]);
     await engine.stop();
   });
 });

@@ -61,6 +61,8 @@ export type OrganizationMode = z.infer<typeof organizationModeSchema>;
 export const organizationPreviewSchema = z.object({
   mode: organizationModeSchema,
   sourceTabIds: z.array(z.string()),
+  /** Local-only fingerprint used to reject a stale preview at confirmation. */
+  sourceFingerprint: z.string().min(1),
   groups: z.array(z.object({
     id: z.string(),
     name: z.string().min(1),

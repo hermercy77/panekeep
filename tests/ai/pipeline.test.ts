@@ -3,6 +3,7 @@ import {
   AIConflictError,
   AIValidationError,
   MockAIClient,
+  fingerprintTabs,
   organizeTabs
 } from "../../src/ai";
 import { tabsFixture } from "./fixtures/organization-response";
@@ -13,6 +14,7 @@ describe("organization pipeline", () => {
     const preview = await organizeTabs({ tabs: tabsFixture, mode: "type", client, batchSize: 2 });
     expect(preview.mode).toBe("type");
     expect(preview.sourceTabIds).toEqual(["tab-1", "tab-2", "tab-3"]);
+    expect(preview.sourceFingerprint).toBe(fingerprintTabs(tabsFixture));
     expect(client.requests).toHaveLength(2);
   });
 

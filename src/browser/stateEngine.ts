@@ -20,6 +20,7 @@ import { DebouncedSaver } from "../storage/debouncedSaver";
 import { DexieStateRepository, type StateRepository } from "../storage/repository";
 import { loadAIConfig } from "../ai/config";
 import { organizeTabs } from "../ai/pipeline";
+import { fingerprintTabs } from "../ai/snapshot";
 import { organizationPreviewSchema } from "../shared/contracts";
 
 export interface BrowserStateEngineOptions {
@@ -634,6 +635,9 @@ export class BrowserStateEngine {
     const currentSourceTabs = this.state.tabs.filter((tab) => sourceIds.has(tab.id));
     if (currentSourceTabs.length !== sourceIds.size || currentSourceTabs.some((tab) => tab.kind === "special")) {
       throw new Error("浏览器状态已变化，请重新整理");
+    }
+    if (fingerprintTabs(currentSourceTabs) !== parsed.sourceFingerprint) {
+      throw new Error("标签在预览后发生了变化，请重新整理");
     }
     const assignedIds: string[] = [];
     for (const group of parsed.groups) assignedIds.push(...group.tabIds);

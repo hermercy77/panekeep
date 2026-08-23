@@ -9,7 +9,7 @@ import { validOrganizationResponse } from "./fixtures/organization-response";
 
 describe("strict organization response validation", () => {
   it("accepts a complete purpose response", () => {
-    const preview = validateOrganizationPreview(validOrganizationResponse, "purpose", ["tab-1", "tab-2", "tab-3"]);
+    const preview = validateOrganizationPreview(validOrganizationResponse, "purpose", ["tab-1", "tab-2", "tab-3"], "fixture-fingerprint");
     expect(preview.mode).toBe("purpose");
     expect(preview.sourceTabIds).toEqual(["tab-1", "tab-2", "tab-3"]);
   });
@@ -20,7 +20,7 @@ describe("strict organization response validation", () => {
   });
 
   it("rejects unknown keys", () => {
-    expect(() => validateOrganizationPreview({ ...validOrganizationResponse, extra: true }, "type", ["tab-1", "tab-2", "tab-3"]))
+    expect(() => validateOrganizationPreview({ ...validOrganizationResponse, extra: true }, "type", ["tab-1", "tab-2", "tab-3"], "fixture-fingerprint"))
       .toThrow(AIValidationError);
   });
 
@@ -28,6 +28,6 @@ describe("strict organization response validation", () => {
     expect(() => validateOrganizationPreview({
       groups: [{ ...validOrganizationResponse.groups[0], tabIds: ["tab-1", "tab-unknown"] }],
       unclassifiedTabIds: []
-    }, "purpose", ["tab-1", "tab-2"])).toThrow(/rejected in full/i);
+    }, "purpose", ["tab-1", "tab-2"], "fixture-fingerprint")).toThrow(/rejected in full/i);
   });
 });

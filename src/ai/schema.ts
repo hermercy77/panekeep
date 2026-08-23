@@ -108,7 +108,8 @@ export function parseAndValidateOrganizationResponse(
 export function validateOrganizationPreview(
   value: unknown,
   mode: OrganizationMode,
-  sourceTabIds: readonly string[]
+  sourceTabIds: readonly string[],
+  sourceFingerprint: string
 ): OrganizationPreview {
   const modeResult = organizationModeSchema.safeParse(mode);
   if (!modeResult.success) {
@@ -118,6 +119,7 @@ export function validateOrganizationPreview(
   const previewCandidate = {
     mode: modeResult.data,
     sourceTabIds: [...sourceTabIds],
+    sourceFingerprint,
     groups: response.groups.map((group) => ({ ...group })),
     unclassifiedTabIds: [...response.unclassifiedTabIds]
   };
