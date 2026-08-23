@@ -10,6 +10,21 @@ export const DEFAULT_AI_CONFIG: AIConfig = {
 /** The key is deliberately kept in storage.local, never storage.sync. */
 export const AI_CONFIG_STORAGE_KEY = "tab-fridge.ai-config";
 
+export interface ModelAvailabilityNotice {
+  tone: "success" | "error";
+  message: string;
+}
+
+export function describeModelAvailability(model: string, models: readonly string[]): ModelAvailabilityNotice {
+  const available = [...new Set(models.filter(Boolean))];
+  if (!available.length) return { tone: "success", message: "连接成功，服务未返回模型列表" };
+  if (available.includes(model)) return { tone: "success", message: `连接成功，可用模型 ${available.length} 个` };
+  return {
+    tone: "error",
+    message: `连接成功，但模型「${model}」不可用。可用模型：${available.join("、")}`
+  };
+}
+
 export interface StorageAreaLike {
   get(
     keys?: string | string[] | Record<string, unknown> | null,

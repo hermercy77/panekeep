@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AI_CONFIG_STORAGE_KEY, LocalAIConfigStore } from "../../src/ai";
+import { AI_CONFIG_STORAGE_KEY, LocalAIConfigStore, describeModelAvailability } from "../../src/ai";
 
 describe("local AI config storage", () => {
   it("stores and loads API configuration through the injected local area", async () => {
@@ -39,5 +39,16 @@ describe("local AI config storage", () => {
     const store = new LocalAIConfigStore(storage);
     await store.save({ baseUrl: "https://api.deepseek.com", apiKey: "secret", model: "deepseek-v4-flash" });
     await expect(store.load()).resolves.toMatchObject({ model: "deepseek-v4-flash", apiKey: "secret" });
+  });
+
+  it("reports a configured model that is missing from the provider list", () => {
+    expect(describeModelAvailability("deepseekv4flash", ["deepseek-v4-pro", "deepseek-v4-flash"])).toEqual({
+      tone: "error",
+      message: "连接成功，但模型「deepseekv4flash」不可用。可用模型：deepseek-v4-pro、deepseek-v4-flash"
+    });
+    expect(describeModelAvailability("deepseek-v4-flash", ["deepseek-v4-flash"])).toEqual({
+      tone: "success",
+      message: "连接成功，可用模型 1 个"
+    });
   });
 });

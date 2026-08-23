@@ -3,7 +3,7 @@ import { ArrowLeft, CircleAlert, CircleCheck, DatabaseBackup, Download, HardDriv
 import type { Workspace } from "../shared/contracts";
 import { useTabFridgeState } from "../ui-state/useTabFridgeState";
 import { WorkspaceDialog } from "./WorkspaceDialog";
-import { createAIConfigStore } from "../ai/config";
+import { createAIConfigStore, describeModelAvailability, type ModelAvailabilityNotice } from "../ai/config";
 import { createOpenAICompatibleClient } from "../ai/client";
 import { workspaceColorClass } from "./workspaceColors";
 
@@ -22,7 +22,7 @@ export function ManageApp() {
   const [dialog, setDialog] = useState<{ windowKey: string; workspace?: Workspace } | null>(null);
   const [busy, setBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Workspace | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<ModelAvailabilityNotice | null>(null);
   const [aiConfig, setAiConfig] = useState({ baseUrl: "https://api.openai.com/v1", apiKey: "", model: "" });
   const [testingAI, setTestingAI] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -63,16 +63,16 @@ export function ManageApp() {
     anchor.download = `tab-fridge-backup-${new Date().toISOString().slice(0, 10)}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
-    setNotice("备份已导出到下载文件夹");
+    setNotice({ tone: "success", message: "备份已导出到下载文件夹" });
   };
 
   const saveAI = async () => {
     try {
       const saved = await aiStore.save(aiConfig);
       setAiConfig(saved);
-      setNotice("AI 设置已保存");
+      setNotice({ tone: "success", message: "AI 设置已保存" });
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "AI 设置保存失败");
+      setNotice({ tone: "error", message: error instanceof Error ? error.message : "AI 设置保存失败" });
     }
   };
 
@@ -82,9 +82,9 @@ export function ManageApp() {
     try {
       const config = await aiStore.save(aiConfig);
       const result = await createOpenAICompatibleClient(config).testConnection();
-      setNotice(`连接成功${result.models.length ? `，可用模型 ${result.models.length} 个` : ""}`);
+      setNotice(describeModelAvailability(config.model, result.models));
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "连接测试失败");
+      setNotice({ tone: "error", message: error instanceof Error ? error.message : "连接测试失败" });
     } finally {
       setTestingAI(false);
     }
@@ -94,7 +94,7 @@ export function ManageApp() {
     setFileError(null);
     try {
       const text = await file.text();
-      if (await state.importBackup(text)) setNotice("备份已导入，请刷新浏览器窗口查看恢复结果");
+      if (await state.importBackup(text)) setNotice({ tone: "success", message: "备份已导入，请刷新浏览器窗口查看恢复结果" });
     } catch (error) {
       setFileError(error instanceof Error ? error.message : "备份导入失败");
     }
@@ -124,7 +124,7 @@ export function ManageApp() {
         </aside>
         <section className="manage-content">
           {state.error ? <div className="error-banner" role="alert"><CircleAlert aria-hidden="true" size={17} /><p>{state.error}</p><button type="button" onClick={state.clearError} aria-label="关闭错误提示"><X aria-hidden="true" size={14} /></button></div> : null}
-          {notice ? <div className="success-banner" role="status"><CircleCheck aria-hidden="true" size={17} /><p>{notice}</p><button type="button" onClick={() => setNotice(null)} aria-label="关闭通知"><X aria-hidden="true" size={14} /></button></div> : null}
+          {notice ? <div className={notice.tone === "success" ? "success-banner" : "error-banner"} role={notice.tone === "success" ? "status" : "alert"}>{notice.tone === "success" ? <CircleCheck aria-hidden="true" size={17} /> : <CircleAlert aria-hidden="true" size={17} />}<p>{notice.message}</p><button type="button" onClick={() => setNotice(null)} aria-label="关闭通知"><X aria-hidden="true" size={14} /></button></div> : null}
           <section className="manage-section" id="workspaces">
             <div className="section-title-row">
               <div>
