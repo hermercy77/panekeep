@@ -119,4 +119,42 @@ describe("OrganizationDialog selection", () => {
     expect(checkboxes.map((checkbox) => checkbox.checked)).toEqual([false, true]);
     await act(async () => root.unmount());
   });
+
+  it("allows confirming an all-unclassified AI suggestion", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const onConfirm = vi.fn(async () => undefined);
+    const preview = {
+      mode: "purpose" as const,
+      sourceTabIds: ["tab-1"],
+      sourceFingerprint: "fixture-fingerprint",
+      groups: [],
+      unclassifiedTabIds: ["tab-1"]
+    };
+
+    await act(async () => root.render(
+      <OrganizationDialog
+        open
+        tabs={groupedTabs}
+        mode="purpose"
+        preview={preview}
+        loading={false}
+        applying={false}
+        error={null}
+        onModeChange={vi.fn()}
+        onGenerate={vi.fn(async () => undefined)}
+        onConfirm={onConfirm}
+        onClose={vi.fn()}
+      />
+    ));
+
+    expect(host.textContent).toContain("AI 建议保持未分类");
+    const confirm = [...host.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("确认并应用"));
+    expect(confirm?.disabled).toBe(false);
+    await act(async () => confirm?.click());
+    expect(onConfirm).toHaveBeenCalledWith(preview);
+    await act(async () => root.unmount());
+  });
 });

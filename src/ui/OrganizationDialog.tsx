@@ -191,8 +191,8 @@ export function OrganizationDialog({
               </div>
             ) : (
               <div className="empty-state compact">
-                <strong>没有找到可整理的标签</strong>
-                <span>固定标签和特殊页面会保留在原处。</span>
+                <strong>{draftPreview.unclassifiedTabIds.length ? "AI 建议保持未分类" : "没有找到可整理的标签"}</strong>
+                <span>{draftPreview.unclassifiedTabIds.length ? "你仍可确认，将这些标签移到当前窗口的未分类区域。" : "固定标签和特殊页面会保留在原处。"}</span>
               </div>
             )}
             {draftPreview.unclassifiedTabIds.length ? (
@@ -216,7 +216,7 @@ export function OrganizationDialog({
               <button className="button button-ghost" type="button" onClick={() => void onGenerate(mode, [...selectedTabIds])} disabled={applying || !selectedTabIds.size}>
                 <RefreshCw aria-hidden="true" size={15} />重新生成
               </button>
-              <button className="button button-primary" type="button" onClick={() => void onConfirm(draftPreview)} disabled={applying || !draftPreview.groups.length}>
+              <button className="button button-primary" type="button" onClick={() => void onConfirm(draftPreview)} disabled={applying || !draftPreview.sourceTabIds.length}>
                 {applying ? <><span className="spinner spinner-inline" />应用中…</> : <><Check aria-hidden="true" size={15} />确认并应用</>}
               </button>
             </div>
