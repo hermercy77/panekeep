@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { X } from "lucide-react";
 import type { Workspace } from "../shared/contracts";
 import type { WorkspaceDraft } from "../ui-state/model";
 
 const COLORS = [
-  ["slate", "#64748b"],
-  ["blue", "#3b82f6"],
-  ["cyan", "#06b6d4"],
-  ["green", "#22c55e"],
-  ["amber", "#f59e0b"],
-  ["rose", "#f43f5e"],
-  ["violet", "#8b5cf6"]
+  ["slate", "石板"],
+  ["blue", "蓝色"],
+  ["cyan", "青色"],
+  ["green", "绿色"],
+  ["amber", "琥珀"],
+  ["rose", "玫瑰"],
+  ["violet", "紫色"]
 ] as const;
 
 interface WorkspaceDialogProps {
@@ -38,8 +39,6 @@ export function WorkspaceDialog({ open, windowKey, workspace, busy = false, onCl
   }, [open, workspace]);
 
   const title = workspace ? "编辑工作区" : "新建工作区";
-  const selectedColor = useMemo(() => COLORS.find(([key]) => key === color)?.[1] ?? "#64748b", [color]);
-
   if (!open) return null;
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -66,11 +65,11 @@ export function WorkspaceDialog({ open, windowKey, workspace, busy = false, onCl
       <section className="dialog-card" role="dialog" aria-modal="true" aria-labelledby="workspace-dialog-title">
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">WORKSPACE</span>
             <h2 id="workspace-dialog-title">{title}</h2>
+            <p className="dialog-kicker">定义名称、用途和识别色。</p>
           </div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="关闭">
-            ×
+            <X aria-hidden="true" size={18} />
           </button>
         </div>
         <form onSubmit={submit}>
@@ -85,6 +84,8 @@ export function WorkspaceDialog({ open, windowKey, workspace, busy = false, onCl
             placeholder="例如：研究、工作、周末"
             autoFocus
             maxLength={48}
+            aria-invalid={Boolean(validationError)}
+            aria-describedby={validationError ? "workspace-form-error" : undefined}
           />
           <label className="field-label" htmlFor="workspace-description">
             描述 <small>可选</small>
@@ -111,27 +112,26 @@ export function WorkspaceDialog({ open, windowKey, workspace, busy = false, onCl
           <fieldset className="field-group">
             <legend className="field-label">颜色</legend>
             <div className="color-options">
-              {COLORS.map(([key, hex]) => (
+              {COLORS.map(([key, label]) => (
                 <button
                   key={key}
                   type="button"
-                  className="color-option"
+                  className={`color-option color-option-${key}`}
                   data-selected={color === key}
-                  aria-label={`选择${key}色`}
+                  aria-label={`选择${label}`}
                   aria-pressed={color === key}
                   onClick={() => setColor(key)}
-                  style={{ "--option-color": hex } as React.CSSProperties}
                 />
               ))}
             </div>
           </fieldset>
-          {validationError ? <p className="form-error">{validationError}</p> : null}
+          {validationError ? <p className="form-error" id="workspace-form-error">{validationError}</p> : <p className="field-helper">名称会同步到浏览器原生标签组。</p>}
           <div className="dialog-actions">
             <button className="button button-ghost" type="button" onClick={onClose} disabled={busy}>
               取消
             </button>
-            <button className="button button-primary" type="submit" disabled={busy} style={{ "--button-accent": selectedColor } as React.CSSProperties}>
-              {busy ? "保存中…" : workspace ? "保存修改" : "创建工作区"}
+            <button className="button button-primary" type="submit" disabled={busy} aria-busy={busy}>
+              {busy ? <><span className="spinner spinner-inline" />保存中…</> : workspace ? "保存修改" : "创建工作区"}
             </button>
           </div>
         </form>

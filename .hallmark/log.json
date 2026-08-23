@@ -1,0 +1,17 @@
+[
+  {
+    "date": "2026-08-23",
+    "scope": "app",
+    "macrostructure": "Workbench",
+    "theme": "C-light / B-dark",
+    "enrichment": "none",
+    "brief": "Tab Fridge side panel and management app redesign",
+    "axes": {
+      "lightness": "adaptive",
+      "displayStyle": "roman-sans",
+      "accentHue": "cobalt"
+    },
+    "slopTest": "58/58 pass",
+    "viewports": [320, 375, 414, 768, 1280]
+  }
+]

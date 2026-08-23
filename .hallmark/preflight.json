@@ -1,0 +1,12 @@
+{
+  "scannedAt": "2026-08-23",
+  "framework": "WXT + React + TypeScript",
+  "fontStack": "Inter and system UI only",
+  "palette": "cool neutral surfaces with a warm orange accent; many inline hex values",
+  "motion": "motion-cut; no motion library",
+  "spacing": "ad hoc pixel values",
+  "designSystem": null,
+  "preserve": ["routes", "component ownership", "copy intent", "business logic"],
+  "introduce": ["Cobalt tokens", "font pairing", "Workbench app structure", "state discipline"]
+}
+

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { CircleAlert, RefreshCw, Rows3, ScanLine, Search, Settings2, X } from "lucide-react";
 import type { OrganizationMode, OrganizationPreview, Workspace } from "../shared/contracts";
 import { useTabFridgeState } from "../ui-state/useTabFridgeState";
 import { OrganizationDialog } from "./OrganizationDialog";
@@ -109,32 +110,30 @@ export function SidePanelApp() {
       <header className="app-header">
         <div className="brand-lockup">
           <div className="brand-mark" aria-hidden="true">
-            <span />
-            <span />
-            <span />
+            <Rows3 size={18} />
           </div>
           <div>
             <h1>Tab Fridge</h1>
-            <p>让标签各就各位</p>
+            <p>标签工作台</p>
           </div>
         </div>
         <div className="header-actions">
           <button className="icon-button" type="button" onClick={() => void state.refresh()} aria-label="刷新" title="刷新">
-            ↻
+            <RefreshCw aria-hidden="true" size={17} />
           </button>
           <a className="icon-button" href={manageUrl()} aria-label="打开管理页" title="管理工作区">
-            ⚙
+            <Settings2 aria-hidden="true" size={17} />
           </a>
         </div>
       </header>
 
       <section className="search-section">
         <label className="search-box">
-          <span aria-hidden="true">⌕</span>
+          <Search aria-hidden="true" size={16} />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标签、网址或工作区" aria-label="搜索标签、网址或工作区" />
           {query ? (
             <button className="search-clear" type="button" onClick={() => setQuery("")} aria-label="清除搜索">
-              ×
+              <X aria-hidden="true" size={14} />
             </button>
           ) : null}
         </label>
@@ -150,10 +149,10 @@ export function SidePanelApp() {
 
       {state.error ? (
         <div className="error-banner" role="alert">
-          <span>!</span>
+          <CircleAlert aria-hidden="true" size={16} />
           <p>{state.error}</p>
           <button type="button" onClick={() => state.clearError()} aria-label="关闭错误提示">
-            ×
+              <X aria-hidden="true" size={14} />
           </button>
         </div>
       ) : null}
@@ -201,11 +200,11 @@ export function SidePanelApp() {
 
       <footer className="sidepanel-footer">
         <div className="footer-stat">
-          <span className="status-dot" />
+          <span className="status-dot" aria-hidden="true" />
           <span>{snapshot.tabs.length ? `${snapshot.tabs.length} 个标签已在本地保存` : "本地优先 · 等待标签"}</span>
         </div>
         <button className="button button-ai" type="button" onClick={openAi}>
-          <span>✦</span> AI 整理
+          <ScanLine aria-hidden="true" size={16} />AI 整理
         </button>
       </footer>
 
@@ -220,7 +219,7 @@ export function SidePanelApp() {
       {deleteTarget ? (
         <div className="dialog-backdrop" role="presentation">
           <section className="dialog-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="delete-title">
-            <div className="confirm-icon">!</div>
+            <div className="confirm-icon"><CircleAlert aria-hidden="true" size={18} /></div>
             <h2 id="delete-title">删除「{deleteTarget.name}」？</h2>
             <p>工作区会被删除，其中的标签会移到“未分类”，标签本身不会关闭。</p>
             <div className="dialog-actions">

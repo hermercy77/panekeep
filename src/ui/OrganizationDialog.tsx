@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Check, ChevronDown, ChevronRight, LayoutGrid, RefreshCw, ScanLine, Target, X } from "lucide-react";
 import type { OrganizationMode, OrganizationPreview, TabRecord } from "../shared/contracts";
 import { tabLabel } from "../ui-state/model";
 
@@ -71,17 +72,18 @@ export function OrganizationDialog({
       <section className="dialog-card organization-dialog" role="dialog" aria-modal="true" aria-labelledby="organization-dialog-title">
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">AI ORGANIZER</span>
             <h2 id="organization-dialog-title">整理标签</h2>
+            <p className="dialog-kicker">先生成方案，确认后才移动标签。</p>
           </div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="关闭">
-            ×
+            <X aria-hidden="true" size={18} />
           </button>
         </div>
         <p className="dialog-intro">先生成可审阅的建议，确认后才会移动标签或创建工作区。</p>
         <div className="mode-options" role="radiogroup" aria-label="整理方式">
           <label className={mode === "purpose" ? "mode-option selected" : "mode-option"}>
             <input type="radio" name="organization-mode" checked={mode === "purpose"} onChange={() => onModeChange("purpose")} />
+            <Target aria-hidden="true" size={17} />
             <span>
               <strong>按目的</strong>
               <small>工作、研究、稍后阅读</small>
@@ -89,6 +91,7 @@ export function OrganizationDialog({
           </label>
           <label className={mode === "type" ? "mode-option selected" : "mode-option"}>
             <input type="radio" name="organization-mode" checked={mode === "type"} onChange={() => onModeChange("type")} />
+            <LayoutGrid aria-hidden="true" size={17} />
             <span>
               <strong>按类型</strong>
               <small>开发、资料、媒体、阅读</small>
@@ -126,7 +129,7 @@ export function OrganizationDialog({
         </div>
         {!preview && !loading ? (
           <div className="organization-empty">
-            <div className="empty-illustration">✦</div>
+            <div className="empty-illustration"><ScanLine aria-hidden="true" size={22} /></div>
             <strong>准备好整理你的标签了吗？</strong>
             <p>AI 只会读取当前标签的标题和网址，并在确认后执行。</p>
             <button className="button button-primary" type="button" disabled={!selectedTabIds.size} onClick={() => void onGenerate(mode, [...selectedTabIds])}>
@@ -154,8 +157,8 @@ export function OrganizationDialog({
                   return (
                     <div className="preview-group" key={group.id}>
                       <button className="preview-group-heading" type="button" onClick={() => toggleGroup(group.id)} aria-expanded={expanded}>
-                        <span className="tree-chevron">{expanded ? "⌄" : "›"}</span>
-                        <span className="workspace-dot workspace-dot-slate" />
+                        <span className="tree-chevron">{expanded ? <ChevronDown aria-hidden="true" size={14} /> : <ChevronRight aria-hidden="true" size={14} />}</span>
+                        <span className="workspace-dot workspace-dot-slate" aria-hidden="true" />
                         <strong>{group.name}</strong>
                         <span className="count-badge">{group.tabIds.length}</span>
                       </button>
@@ -204,10 +207,10 @@ export function OrganizationDialog({
             ) : null}
             <div className="dialog-actions">
               <button className="button button-ghost" type="button" onClick={() => void onGenerate(mode, [...selectedTabIds])} disabled={applying || !selectedTabIds.size}>
-                重新生成
+                <RefreshCw aria-hidden="true" size={15} />重新生成
               </button>
               <button className="button button-primary" type="button" onClick={() => void onConfirm(draftPreview)} disabled={applying || !draftPreview.groups.length}>
-                {applying ? "应用中…" : "确认并应用"}
+                {applying ? <><span className="spinner spinner-inline" />应用中…</> : <><Check aria-hidden="true" size={15} />确认并应用</>}
               </button>
             </div>
           </div>

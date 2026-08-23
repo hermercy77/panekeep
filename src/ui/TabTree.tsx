@@ -1,4 +1,5 @@
-import { useMemo, type DragEvent } from "react";
+import { useMemo, type DragEvent, type ReactNode } from "react";
+import { ChevronDown, ChevronRight, GripVertical, Inbox, Pencil, Pin, Plus, Rows3, ShieldAlert, Trash2 } from "lucide-react";
 import type { TabRecord, WindowState, Workspace } from "../shared/contracts";
 import { tabHost, tabLabel } from "../ui-state/model";
 import type { TabFridgeSnapshot } from "../ui-state/model";
@@ -91,8 +92,8 @@ function TabRow({ tab, selected, onActivate, onDragStart }: { tab: TabRecord; se
         <span className="tab-title">{tabLabel(tab)}</span>
         <span className="tab-host">{tabHost(tab)}</span>
       </span>
-      {tab.pinned ? <span className="tab-marker" title="已固定">●</span> : null}
-      {tab.specialReason ? <span className="tab-marker special-marker" title={tab.specialReason}>✦</span> : null}
+      {tab.pinned ? <span className="tab-marker" title="已固定"><Pin aria-hidden="true" size={12} /></span> : null}
+      {tab.specialReason ? <span className="tab-marker special-marker" title={tab.specialReason}><ShieldAlert aria-hidden="true" size={12} /></span> : null}
     </button>
   );
 }
@@ -104,7 +105,7 @@ function SectionHeading({
   workspaceId,
   onDrop
 }: {
-  icon: string;
+  icon: ReactNode;
   label: string;
   count: number;
   workspaceId?: string;
@@ -123,7 +124,7 @@ function SectionHeading({
 function EmptyTree({ query, filter }: { query: string; filter: TabFilter }) {
   return (
     <div className="empty-state tree-empty">
-      <div className="empty-illustration">◌</div>
+      <div className="empty-illustration"><Rows3 aria-hidden="true" size={22} /></div>
       <strong>{query ? "没有匹配的标签" : filter === "unclassified" ? "未分类为空" : "当前窗口还没有标签"}</strong>
       <span>{query ? "换个关键词试试，支持标题和网址搜索。" : "打开网页后，标签会自动出现在这里。"}</span>
     </div>
@@ -171,8 +172,8 @@ export function TabTree({
         return (
           <section className={window.isCurrent ? "window-section current" : "window-section"} key={window.key}>
             <button className="window-heading" type="button" onClick={() => onToggleWindow(window.key)} aria-expanded={isExpanded}>
-              <span className="tree-chevron">{isExpanded ? "⌄" : "›"}</span>
-              <span className="window-icon">▦</span>
+              <span className="tree-chevron">{isExpanded ? <ChevronDown aria-hidden="true" size={15} /> : <ChevronRight aria-hidden="true" size={15} />}</span>
+              <span className="window-icon"><Rows3 aria-hidden="true" size={14} /></span>
               <span className="window-name">{windowLabel(window, windowIndex)}</span>
               {window.isCurrent ? <span className="current-pill">当前</span> : null}
               <span className="window-count">{windowTabs.length}</span>
@@ -180,7 +181,7 @@ export function TabTree({
             {isExpanded ? (
               <div className="window-children">
                 <div className="tree-section">
-                  <SectionHeading icon="⌂" label="固定标签" count={fixedTabs.length} />
+                  <SectionHeading icon={<Pin aria-hidden="true" size={14} />} label="固定标签" count={fixedTabs.length} />
                   {fixedTabs.map((tab) => (
                     <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => writeDrag(event, { type: "tab", id: tab.id })} />
                   ))}
@@ -212,17 +213,18 @@ export function TabTree({
                     >
                       <div className="workspace-heading-row" title={workspace.description || undefined}>
                         <button className="workspace-heading" type="button" onClick={() => onToggleWorkspace(workspace.id)} aria-expanded={workspaceExpanded}>
-                          <span className="tree-chevron">{workspaceExpanded ? "⌄" : "›"}</span>
-                          <span className={`workspace-dot workspace-dot-${workspace.color || "slate"}`} />
+                          <GripVertical className="drag-handle" aria-hidden="true" size={14} />
+                          <span className="tree-chevron">{workspaceExpanded ? <ChevronDown aria-hidden="true" size={14} /> : <ChevronRight aria-hidden="true" size={14} />}</span>
+                          <span className={`workspace-dot workspace-dot-${workspace.color || "slate"}`} aria-hidden="true" />
                           <span className="workspace-name">{workspace.name}</span>
                           <span className="workspace-count">{workspaceTabs.length}</span>
                         </button>
                         <div className="workspace-actions">
                           <button className="mini-icon-button" type="button" onClick={() => onEditWorkspace(workspace)} aria-label={`编辑${workspace.name}`}>
-                            ✎
+                            <Pencil aria-hidden="true" size={14} />
                           </button>
                           <button className="mini-icon-button danger" type="button" onClick={() => onDeleteWorkspace(workspace)} aria-label={`删除${workspace.name}`}>
-                            ×
+                            <Trash2 aria-hidden="true" size={14} />
                           </button>
                         </div>
                         {workspace.description ? <span className="description-tooltip">{workspace.description}</span> : null}
@@ -243,7 +245,7 @@ export function TabTree({
                 })}
                 <div className="tree-section">
                   <SectionHeading
-                    icon="◇"
+                    icon={<Inbox aria-hidden="true" size={14} />}
                     label="未分类"
                     count={unclassified.length}
                     onDrop={(event) => {
@@ -257,13 +259,13 @@ export function TabTree({
                   ))}
                 </div>
                 <div className="tree-section">
-                  <SectionHeading icon="✦" label="特殊页面" count={specialTabs.length} />
+                  <SectionHeading icon={<ShieldAlert aria-hidden="true" size={14} />} label="特殊页面" count={specialTabs.length} />
                   {specialTabs.map((tab) => (
                     <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => writeDrag(event, { type: "tab", id: tab.id })} />
                   ))}
                 </div>
                 <button className="create-workspace-link" type="button" onClick={() => onCreateWorkspace(window.key)}>
-                  <span>＋</span> 新建工作区
+                  <Plus aria-hidden="true" size={14} />新建工作区
                 </button>
               </div>
             ) : null}
