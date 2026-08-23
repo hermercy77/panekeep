@@ -40,4 +40,25 @@ describe("organization pipeline", () => {
       getCurrentTabs: () => [changed, tabsFixture[1], tabsFixture[2]]
     })).rejects.toBeInstanceOf(AIConflictError);
   });
+
+  it("keeps local organization overhead negligible for 50 tabs", async () => {
+    const tabs = Array.from({ length: 50 }, (_, index) => ({
+      id: `tab-${index + 1}`,
+      windowKey: index < 25 ? "window-1" : "window-2",
+      workspaceId: null,
+      kind: "normal" as const,
+      url: `https://example.com/project/${index + 1}`,
+      title: `Project tab ${index + 1}`,
+      index,
+      pinned: false
+    }));
+    const client = new MockAIClient();
+    const startedAt = performance.now();
+
+    const preview = await organizeTabs({ tabs, mode: "purpose", client, batchSize: 20 });
+
+    expect(performance.now() - startedAt).toBeLessThan(1_000);
+    expect(preview.sourceTabIds).toHaveLength(50);
+    expect(client.requests).toHaveLength(3);
+  });
 });
