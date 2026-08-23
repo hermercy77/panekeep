@@ -16,7 +16,7 @@ export default defineConfig({
     ],
     optional_host_permissions: ["http://*/*", "https://*/*"],
     action: {
-      default_title: "Open Tab Fridge"
+      default_title: "打开或关闭 Tab Fridge"
     },
     side_panel: {
       default_path: "sidepanel.html"

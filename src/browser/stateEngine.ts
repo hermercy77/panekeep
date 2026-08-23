@@ -553,6 +553,10 @@ export class BrowserStateEngine {
       case "snapshot":
         result = this.getState();
         break;
+      case "refresh":
+        await this.syncFromBrowser();
+        result = this.getState();
+        break;
       case "workspace.create":
         result = await this.createWorkspace({
           ...payload,

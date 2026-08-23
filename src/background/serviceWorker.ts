@@ -1,29 +1,58 @@
-import { addBrowserListener, getBrowserApi, type BrowserLike } from "../browser/api";
+import { addBrowserListener, getBrowserApi, invokeBrowser, type BrowserLike } from "../browser/api";
 import { BrowserStateEngine } from "../browser/stateEngine";
-import { isBackgroundRequest } from "../shared/messages";
+import {
+  BACKGROUND_MESSAGE_SOURCE,
+  STATE_UPDATED_ACTION,
+  isBackgroundRequest,
+  isUiActionMessage
+} from "../shared/messages";
 
 let engine: BrowserStateEngine | undefined;
 let startPromise: Promise<BrowserStateEngine> | undefined;
 let runtimeHandlersRegistered = false;
+let wakeHandlersRegistered = false;
+let backgroundReady = false;
 let removeRuntimeHandlers: Array<() => void> = [];
 
 /** Starts the singleton MV3 service-worker state engine. */
 export function startBackground(options: { api?: BrowserLike } = {}): Promise<BrowserStateEngine> {
   if (startPromise) return startPromise;
+  const api = options.api ?? getBrowserApi();
+  engine = new BrowserStateEngine({ api });
   startPromise = (async () => {
-    const api = options.api ?? getBrowserApi();
-    engine = new BrowserStateEngine({ api });
-    registerRuntimeHandlers(api, engine);
-    await engine.start();
+    await configureSidePanelAction(api);
+    await engine?.start();
+    if (!engine) throw new Error("Tab Fridge background engine failed to initialize");
+    removeRuntimeHandlers.push(registerStateBroadcast(api, engine));
+    backgroundReady = true;
     return engine;
   })().catch((error) => {
     for (const remove of removeRuntimeHandlers.splice(0)) remove();
     runtimeHandlersRegistered = false;
+    wakeHandlersRegistered = false;
+    backgroundReady = false;
     startPromise = undefined;
     engine = undefined;
     throw error;
   });
+  registerRuntimeHandlers(api, engine);
+  if (!wakeHandlersRegistered) {
+    wakeHandlersRegistered = true;
+    removeRuntimeHandlers.push(registerBrowserWakeup(api, () => {
+      if (backgroundReady) return;
+      void startPromise?.then((stateEngine) => stateEngine.syncFromBrowser()).catch(() => undefined);
+    }));
+  }
   return startPromise;
+}
+
+async function configureSidePanelAction(api: BrowserLike): Promise<void> {
+  if (typeof api.sidePanel?.setPanelBehavior !== "function") return;
+  try {
+    await invokeBrowser<void>(api.sidePanel, "setPanelBehavior", { openPanelOnActionClick: true });
+  } catch (error) {
+    console.warn("Tab Fridge could not enable toolbar side-panel toggling", error);
+  }
 }
 
 export function getBackgroundEngine(): BrowserStateEngine | undefined {
@@ -35,7 +64,7 @@ function registerRuntimeHandlers(api: BrowserLike, stateEngine: BrowserStateEngi
   runtimeHandlersRegistered = true;
 
   removeRuntimeHandlers.push(addBrowserListener(api.runtime.onMessage, (message: unknown, _sender: unknown, sendResponse?: (response: unknown) => void) => {
-    const uiMessage = isUiMessage(message) ? message : undefined;
+    const uiMessage = isUiActionMessage(message) ? message : undefined;
     if (!isBackgroundRequest(message) && !uiMessage) return false;
     const work = startPromise
       ?.then(() => isBackgroundRequest(message)
@@ -60,9 +89,46 @@ function registerRuntimeHandlers(api: BrowserLike, stateEngine: BrowserStateEngi
   }));
 }
 
-function isUiMessage(value: unknown): value is { source?: string; action: string; payload?: unknown } {
-  return typeof value === "object"
-    && value !== null
-    && "action" in value
-    && typeof (value as { action?: unknown }).action === "string";
+export function registerStateBroadcast(
+  api: BrowserLike,
+  stateEngine: Pick<BrowserStateEngine, "subscribe">
+): () => void {
+  if (typeof api.runtime?.sendMessage !== "function") return () => undefined;
+  return stateEngine.subscribe((snapshot) => {
+    try {
+      const pending = api.runtime?.sendMessage({
+        source: BACKGROUND_MESSAGE_SOURCE,
+        action: STATE_UPDATED_ACTION,
+        snapshot
+      });
+      if (pending && typeof pending.catch === "function") {
+        void pending.catch(() => undefined);
+      }
+    } catch {
+      // The side panel may be closed. Browser events should still be persisted,
+      // and the next opened UI will fetch the latest snapshot normally.
+    }
+  });
+}
+
+export function registerBrowserWakeup(api: BrowserLike, onWake: () => void): () => void {
+  const events = [
+    api.tabs?.onCreated,
+    api.tabs?.onRemoved,
+    api.tabs?.onUpdated,
+    api.tabs?.onMoved,
+    api.tabs?.onActivated,
+    api.tabs?.onAttached,
+    api.tabs?.onDetached,
+    api.tabs?.onReplaced,
+    api.windows?.onCreated,
+    api.windows?.onRemoved,
+    api.windows?.onFocusChanged,
+    api.tabGroups?.onCreated,
+    api.tabGroups?.onRemoved,
+    api.tabGroups?.onUpdated,
+    api.tabGroups?.onMoved
+  ];
+  const removers = events.map((event) => addBrowserListener(event, onWake));
+  return () => removers.forEach((remove) => remove());
 }

@@ -1,5 +1,9 @@
 import type { Backup, OrganizationMode, TabRecord, Workspace } from "./contracts";
 
+export const UI_MESSAGE_SOURCE = "tab-fridge-ui" as const;
+export const BACKGROUND_MESSAGE_SOURCE = "tab-fridge-background" as const;
+export const STATE_UPDATED_ACTION = "state.updated" as const;
+
 export const MESSAGE_TYPES = {
   getState: "tab-fridge/get-state",
   refresh: "tab-fridge/refresh",
@@ -50,6 +54,18 @@ export interface BrowserStateResponse {
   tabs: TabRecord[];
 }
 
+export interface UiActionMessage {
+  source: typeof UI_MESSAGE_SOURCE;
+  action: string;
+  payload?: unknown;
+}
+
+export interface StateUpdatedMessage {
+  source: typeof BACKGROUND_MESSAGE_SOURCE;
+  action: typeof STATE_UPDATED_ACTION;
+  snapshot: BrowserStateResponse;
+}
+
 export interface MoveTabsResponse extends BrowserStateResponse {
   movedTabIds: string[];
   skippedTabIds: string[];
@@ -72,7 +88,21 @@ export function isBackgroundRequest(value: unknown): value is BackgroundRequest 
   return typeof value === "object" && value !== null && "type" in value;
 }
 
+export function isUiActionMessage(value: unknown): value is UiActionMessage {
+  return typeof value === "object"
+    && value !== null
+    && (value as { source?: unknown }).source === UI_MESSAGE_SOURCE
+    && typeof (value as { action?: unknown }).action === "string";
+}
+
+export function isStateUpdatedMessage(value: unknown): value is StateUpdatedMessage {
+  return typeof value === "object"
+    && value !== null
+    && (value as { source?: unknown }).source === BACKGROUND_MESSAGE_SOURCE
+    && (value as { action?: unknown }).action === STATE_UPDATED_ACTION
+    && "snapshot" in value;
+}
+
 export function isOrganizationMode(value: unknown): value is OrganizationMode {
   return value === "purpose" || value === "type";
 }
-

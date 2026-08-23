@@ -4,6 +4,7 @@ import type {
   TabRecord,
   Workspace
 } from "../shared/contracts";
+import { UI_MESSAGE_SOURCE, isStateUpdatedMessage } from "../shared/messages";
 import {
   cloneSnapshot,
   emptySnapshot,
@@ -22,10 +23,20 @@ function now(): number {
 
 function getRuntime(): {
   sendMessage?: (message: unknown) => Promise<unknown>;
+  onMessage?: {
+    addListener?: (listener: (message: unknown) => unknown) => void;
+    removeListener?: (listener: (message: unknown) => unknown) => void;
+  };
 } | null {
   const scope = globalThis as { chrome?: { runtime?: unknown }; browser?: { runtime?: unknown } };
   const browser = scope.chrome ?? scope.browser;
-  const runtime = browser?.runtime as { sendMessage?: (message: unknown) => Promise<unknown> } | undefined;
+  const runtime = browser?.runtime as {
+    sendMessage?: (message: unknown) => Promise<unknown>;
+    onMessage?: {
+      addListener?: (listener: (message: unknown) => unknown) => void;
+      removeListener?: (listener: (message: unknown) => unknown) => void;
+    };
+  } | undefined;
   return runtime ?? null;
 }
 
@@ -184,7 +195,7 @@ export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdap
     const runtime = getRuntime();
     if (!runtime?.sendMessage) return undefined;
     try {
-      const response = (await runtime.sendMessage({ source: "tab-fridge-ui", action, payload })) as Record<string, unknown> | undefined;
+      const response = (await runtime.sendMessage({ source: UI_MESSAGE_SOURCE, action, payload })) as Record<string, unknown> | undefined;
       if (!response) return undefined;
       if (response.ok === false) throw new Error(typeof response.error === "string" ? response.error : "操作失败");
       const remoteSnapshot = normalizeSnapshot(response.snapshot ?? response);
@@ -205,7 +216,7 @@ export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdap
 
   return {
     async getSnapshot() {
-      const result = await bridge("snapshot");
+      const result = await bridge("refresh");
       const remote = normalizeSnapshot(result);
       return remote ?? callFallback((adapter) => adapter.getSnapshot());
     },
@@ -259,7 +270,21 @@ export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdap
       if (result === undefined) throw new Error("无法导入 JSON 备份");
     },
     subscribe(listener) {
-      return fallback.subscribe?.(listener) ?? (() => undefined);
+      const unsubscribeFallback = fallback.subscribe?.(listener) ?? (() => undefined);
+      const runtime = getRuntime();
+      const onMessage = (message: unknown): false => {
+        if (!isStateUpdatedMessage(message)) return false;
+        const snapshot = normalizeSnapshot(message.snapshot);
+        if (!snapshot) return false;
+        const replace = (fallback as TabFridgeAdapter & { replaceSnapshot?: (next: TabFridgeSnapshot) => void }).replaceSnapshot;
+        replace?.(snapshot);
+        return false;
+      };
+      runtime?.onMessage?.addListener?.(onMessage);
+      return () => {
+        runtime?.onMessage?.removeListener?.(onMessage);
+        unsubscribeFallback();
+      };
     }
   };
 }
