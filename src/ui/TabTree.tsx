@@ -1,4 +1,4 @@
-import { useMemo, useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { AppWindow, ChevronDown, ChevronRight, GripVertical, Inbox, Pencil, Pin, Plus, Rows3, ShieldAlert, Trash2 } from "lucide-react";
 import type { TabRecord, WindowState, Workspace } from "../shared/contracts";
 import { tabHost, tabLabel } from "../ui-state/model";
@@ -84,13 +84,29 @@ function Favicon({ tab }: { tab: TabRecord }) {
   );
 }
 
-function TabRow({ tab, selected, onActivate, onDragStart }: { tab: TabRecord; selected: boolean; onActivate: () => void; onDragStart: (event: DragEvent) => void }) {
+function TabRow({
+  tab,
+  selected,
+  dragging,
+  onActivate,
+  onDragStart,
+  onDragEnd
+}: {
+  tab: TabRecord;
+  selected: boolean;
+  dragging: boolean;
+  onActivate: () => void;
+  onDragStart: (event: DragEvent) => void;
+  onDragEnd: (event: DragEvent) => void;
+}) {
+  const canDrag = tab.kind !== "special";
   return (
     <button
-      className={selected ? "tab-row selected" : "tab-row"}
+      className={`tab-row${selected ? " selected" : ""}${dragging ? " dragging-source" : ""}`}
       type="button"
-      draggable
-      onDragStart={onDragStart}
+      draggable={canDrag}
+      onDragStart={canDrag ? onDragStart : undefined}
+      onDragEnd={canDrag ? onDragEnd : undefined}
       onClick={onActivate}
       title={`${tabLabel(tab)}\n${tab.url}`}
     >
@@ -111,9 +127,7 @@ function SectionHeading({
   count,
   kind,
   expanded,
-  onToggle,
-  workspaceId,
-  onDrop
+  onToggle
 }: {
   icon: ReactNode;
   label: string;
@@ -121,24 +135,19 @@ function SectionHeading({
   kind: TabSectionKind;
   expanded: boolean;
   onToggle: () => void;
-  workspaceId?: string;
-  onDrop?: (event: DragEvent) => void;
 }) {
   return (
     <button
-      className={`section-heading section-heading-${kind} drop-target`}
+      className={`section-heading section-heading-${kind}`}
       type="button"
       data-level="tab-type"
       aria-expanded={expanded}
       onClick={onToggle}
-      onDragOver={onDrop ? (event) => event.preventDefault() : undefined}
-      onDrop={onDrop}
     >
       <span className="tree-chevron">{expanded ? <ChevronDown aria-hidden="true" size={14} /> : <ChevronRight aria-hidden="true" size={14} />}</span>
       <span className="section-icon">{icon}</span>
       <span>{label}</span>
       <span className="section-count">{count}</span>
-      {workspaceId ? <span className="drop-hint">拖放整理</span> : null}
     </button>
   );
 }
@@ -172,6 +181,10 @@ export function TabTree({
   onCreateWorkspace
 }: TabTreeProps) {
   const [collapsedTabSections, setCollapsedTabSections] = useState<Set<string>>(new Set());
+  const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
+  const [activeDropTarget, setActiveDropTarget] = useState<string | null>(null);
+  const activeDropTargetRef = useRef<string | null>(null);
+  const workspaceExpandTimerRef = useRef<number | null>(null);
   const windows = useMemo(() => {
     if (snapshot.windows.length) return snapshot.windows;
     const keys = [...new Set(snapshot.tabs.map((tab) => tab.windowKey))];
@@ -190,8 +203,67 @@ export function TabTree({
     });
   };
 
+  useEffect(() => () => {
+    if (workspaceExpandTimerRef.current !== null) window.clearTimeout(workspaceExpandTimerRef.current);
+  }, []);
+
+  const clearWorkspaceExpandTimer = () => {
+    if (workspaceExpandTimerRef.current === null) return;
+    window.clearTimeout(workspaceExpandTimerRef.current);
+    workspaceExpandTimerRef.current = null;
+  };
+
+  const setDropTarget = (target: string | null) => {
+    activeDropTargetRef.current = target;
+    setActiveDropTarget(target);
+  };
+
+  const finishDrag = (event?: DragEvent) => {
+    event?.stopPropagation();
+    clearWorkspaceExpandTimer();
+    setDropTarget(null);
+    setDragPayload(null);
+  };
+
+  const beginDrag = (event: DragEvent, payload: DragPayload) => {
+    event.stopPropagation();
+    writeDrag(event, payload);
+    setDragPayload(payload);
+    setDropTarget(null);
+  };
+
+  const activateDropTarget = (event: DragEvent, target: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    setDropTarget(target);
+  };
+
+  const leaveDropTarget = (event: DragEvent, target: string) => {
+    const next = event.relatedTarget;
+    if (next instanceof Node && event.currentTarget.contains(next)) return;
+    if (activeDropTargetRef.current === target) setDropTarget(null);
+    clearWorkspaceExpandTimer();
+  };
+
+  const scheduleWorkspaceExpand = (workspaceId: string, target: string, expanded: boolean) => {
+    if (expanded || workspaceExpandTimerRef.current !== null) return;
+    workspaceExpandTimerRef.current = window.setTimeout(() => {
+      workspaceExpandTimerRef.current = null;
+      if (activeDropTargetRef.current === target) onToggleWorkspace(workspaceId);
+    }, 600);
+  };
+
+  const draggedTab = dragPayload?.type === "tab" ? snapshot.tabs.find((tab) => tab.id === dragPayload.id) : undefined;
+  const canMoveDraggedTab = dragPayload?.type === "tab" && draggedTab !== undefined && draggedTab.kind !== "special";
+  const canMoveDraggedTabToUnclassified = canMoveDraggedTab && draggedTab.workspaceId !== null;
+  const tabDropGuidance = draggedTab?.pinned ? "取消固定并移入" : "松开移入";
+
   return (
-    <div className="tree" aria-label="标签树">
+    <div className={`tree${dragPayload ? ` dragging-${dragPayload.type}` : ""}`} aria-label="标签树">
+      <span className="sr-only" aria-live="polite">
+        {dragPayload?.type === "tab" ? "正在移动标签，可放入其他工作区或未分类" : dragPayload?.type === "workspace" ? "正在调整工作区顺序" : ""}
+      </span>
       {!windows.length || (!visibleTabCount && !visibleWorkspaceCount) ? <EmptyTree query={query} filter={filter} /> : null}
       {windows.filter((window) => windowScope === "all" || window.isCurrent).map((window, windowIndex) => {
         const windowTabs = snapshot.tabs.filter((tab) => tab.windowKey === window.key);
@@ -205,6 +277,7 @@ export function TabTree({
         const unclassifiedExpanded = sectionExpanded(window.key, "unclassified");
         const specialExpanded = sectionExpanded(window.key, "special");
         const fixedExpanded = sectionExpanded(window.key, "fixed");
+        const canDropIntoWindowUnclassified = canMoveDraggedTabToUnclassified && draggedTab.windowKey === window.key;
         return (
           <section className={window.isCurrent ? "window-section current" : "window-section"} data-level="window" key={window.key}>
             <button className="window-heading" type="button" onClick={() => onToggleWindow(window.key)} aria-expanded={isExpanded}>
@@ -226,24 +299,46 @@ export function TabTree({
                     .filter((tab) => tab.workspaceId === workspace.id && tab.kind !== "special" && !tab.pinned)
                     .filter((tab) => !query.trim() || workspaceNameMatches || tabMatches(tab, query, filter));
                   const workspaceExpanded = expandedWorkspaces.has(workspace.id);
+                  const workspaceDropTarget = `workspace:${workspace.id}`;
+                  const acceptsTab = canMoveDraggedTab && draggedTab.workspaceId !== workspace.id;
+                  const acceptsWorkspace = dragPayload?.type === "workspace" && dragPayload.id !== workspace.id;
+                  const acceptsDrop = acceptsTab || acceptsWorkspace;
                   return (
                     <div
-                      className={`tree-section workspace-section workspace-accent-${workspaceColorName(workspace.color)}`}
+                      className={`tree-section workspace-section workspace-accent-${workspaceColorName(workspace.color)}${acceptsTab ? " drop-zone-tab" : ""}${acceptsWorkspace ? " drop-zone-workspace" : ""}${activeDropTarget === workspaceDropTarget ? " drag-active" : ""}${dragPayload?.type === "workspace" && dragPayload.id === workspace.id ? " dragging-source" : ""}`}
                       data-level="workspace"
                       key={workspace.id}
-                      draggable
-                      onDragStart={(event) => writeDrag(event, { type: "workspace", id: workspace.id })}
-                      onDragOver={(event) => event.preventDefault()}
+                      onDragEnter={(event) => {
+                        if (!acceptsDrop) return;
+                        activateDropTarget(event, workspaceDropTarget);
+                        if (acceptsTab) scheduleWorkspaceExpand(workspace.id, workspaceDropTarget, workspaceExpanded);
+                      }}
+                      onDragOver={(event) => {
+                        if (!acceptsDrop) return;
+                        activateDropTarget(event, workspaceDropTarget);
+                      }}
+                      onDragLeave={(event) => leaveDropTarget(event, workspaceDropTarget)}
                       onDrop={(event) => {
+                        if (!acceptsDrop) return;
                         event.preventDefault();
-                        const payload = parseDrag(event);
+                        event.stopPropagation();
+                        const payload = parseDrag(event) ?? dragPayload;
                         if (!payload) return;
                         if (payload.type === "tab") onMoveTab(payload.id, workspace.id);
                         if (payload.type === "workspace" && payload.id !== workspace.id) onMoveWorkspace(payload.id, workspace.id);
+                        finishDrag();
                       }}
                     >
                       <div className="workspace-heading-row" title={workspace.description || undefined}>
-                        <button className="workspace-heading" type="button" onClick={() => onToggleWorkspace(workspace.id)} aria-expanded={workspaceExpanded}>
+                        <button
+                          className="workspace-heading"
+                          type="button"
+                          draggable
+                          onDragStart={(event) => beginDrag(event, { type: "workspace", id: workspace.id })}
+                          onDragEnd={finishDrag}
+                          onClick={() => onToggleWorkspace(workspace.id)}
+                          aria-expanded={workspaceExpanded}
+                        >
                           <GripVertical className="drag-handle" aria-hidden="true" size={14} />
                           <span className="tree-chevron">{workspaceExpanded ? <ChevronDown aria-hidden="true" size={14} /> : <ChevronRight aria-hidden="true" size={14} />}</span>
                           <span className={`workspace-dot workspace-dot-${workspaceColorName(workspace.color)}`} aria-hidden="true" />
@@ -261,11 +356,12 @@ export function TabTree({
                         </div>
                         {workspace.description ? <span className="description-tooltip">{workspace.description}</span> : null}
                       </div>
+                      <span className="drop-guidance" aria-hidden="true">{tabDropGuidance}</span>
                       {workspaceExpanded ? (
                         <div className="workspace-tabs drop-target">
                           {workspaceTabs.length ? (
                             workspaceTabs.map((tab) => (
-                              <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => writeDrag(event, { type: "tab", id: tab.id })} />
+                              <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} dragging={dragPayload?.type === "tab" && dragPayload.id === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
                             ))
                           ) : (
                             <div className="drop-placeholder">把标签拖到这里</div>
@@ -278,7 +374,26 @@ export function TabTree({
                 <button className="create-workspace-link" type="button" onClick={() => onCreateWorkspace(window.key)}>
                   <Plus aria-hidden="true" size={14} />新建工作区
                 </button>
-                <div className="tree-section">
+                <div
+                  className={`tree-section unclassified-section${canDropIntoWindowUnclassified ? " drop-zone-tab" : ""}${activeDropTarget === `unclassified:${window.key}` ? " drag-active" : ""}`}
+                  onDragEnter={(event) => {
+                    if (!canDropIntoWindowUnclassified) return;
+                    activateDropTarget(event, `unclassified:${window.key}`);
+                  }}
+                  onDragOver={(event) => {
+                    if (!canDropIntoWindowUnclassified) return;
+                    activateDropTarget(event, `unclassified:${window.key}`);
+                  }}
+                  onDragLeave={(event) => leaveDropTarget(event, `unclassified:${window.key}`)}
+                  onDrop={(event) => {
+                    if (!canDropIntoWindowUnclassified) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const payload = parseDrag(event) ?? dragPayload;
+                    if (payload?.type === "tab") onMoveTab(payload.id, null);
+                    finishDrag();
+                  }}
+                >
                   <SectionHeading
                     icon={<Inbox aria-hidden="true" size={14} />}
                     label="未分类"
@@ -286,14 +401,10 @@ export function TabTree({
                     kind="unclassified"
                     expanded={unclassifiedExpanded}
                     onToggle={() => toggleSection(window.key, "unclassified")}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      const payload = parseDrag(event);
-                      if (payload?.type === "tab") onMoveTab(payload.id, null);
-                    }}
                   />
+                  <span className="drop-guidance" aria-hidden="true">松开移回未分类</span>
                   {unclassifiedExpanded ? unclassified.map((tab) => (
-                    <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => writeDrag(event, { type: "tab", id: tab.id })} />
+                    <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} dragging={dragPayload?.type === "tab" && dragPayload.id === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
                   )) : null}
                 </div>
                 <div className="tree-section">
@@ -306,7 +417,7 @@ export function TabTree({
                     onToggle={() => toggleSection(window.key, "special")}
                   />
                   {specialExpanded ? specialTabs.map((tab) => (
-                    <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => writeDrag(event, { type: "tab", id: tab.id })} />
+                    <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} dragging={false} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
                   )) : null}
                 </div>
                 <div className="tree-section">
@@ -319,7 +430,7 @@ export function TabTree({
                     onToggle={() => toggleSection(window.key, "fixed")}
                   />
                   {fixedExpanded ? fixedTabs.map((tab) => (
-                    <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => writeDrag(event, { type: "tab", id: tab.id })} />
+                    <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} dragging={dragPayload?.type === "tab" && dragPayload.id === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
                   )) : null}
                 </div>
               </div>
