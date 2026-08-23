@@ -56,6 +56,15 @@ export function nativeGroupId(groupId: number | undefined): number | undefined {
 }
 
 export function normalizeGroupColor(color: unknown): string {
-  return typeof color === "string" && color.length > 0 ? color : "grey";
+  const value = typeof color === "string" ? color.trim().toLowerCase() : "";
+  const aliases: Record<string, string> = {
+    slate: "grey",
+    amber: "yellow",
+    rose: "pink",
+    violet: "purple"
+  };
+  const normalized = aliases[value] ?? value;
+  return new Set(["grey", "blue", "cyan", "green", "orange", "pink", "purple", "red", "yellow"]).has(normalized)
+    ? normalized
+    : "grey";
 }
-

@@ -1,17 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { X } from "lucide-react";
 import type { Workspace } from "../shared/contracts";
+import { normalizeGroupColor } from "../shared/constants";
 import type { WorkspaceDraft } from "../ui-state/model";
-
-const COLORS = [
-  ["slate", "石板"],
-  ["blue", "蓝色"],
-  ["cyan", "青色"],
-  ["green", "绿色"],
-  ["amber", "琥珀"],
-  ["rose", "玫瑰"],
-  ["violet", "紫色"]
-] as const;
+import { WORKSPACE_COLOR_OPTIONS } from "./workspaceColors";
 
 interface WorkspaceDialogProps {
   open: boolean;
@@ -26,7 +18,7 @@ export function WorkspaceDialog({ open, windowKey, workspace, busy = false, onCl
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState("");
-  const [color, setColor] = useState("slate");
+  const [color, setColor] = useState("grey");
   const [validationError, setValidationError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -34,7 +26,7 @@ export function WorkspaceDialog({ open, windowKey, workspace, busy = false, onCl
     setName(workspace?.name ?? "");
     setDescription(workspace?.description ?? "");
     setTags(workspace?.tags.join(", ") ?? "");
-    setColor(workspace?.color || "slate");
+    setColor(normalizeGroupColor(workspace?.color));
     setValidationError(null);
   }, [open, workspace]);
 
@@ -112,7 +104,7 @@ export function WorkspaceDialog({ open, windowKey, workspace, busy = false, onCl
           <fieldset className="field-group">
             <legend className="field-label">颜色</legend>
             <div className="color-options">
-              {COLORS.map(([key, label]) => (
+              {WORKSPACE_COLOR_OPTIONS.map(([key, label]) => (
                 <button
                   key={key}
                   type="button"

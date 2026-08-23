@@ -3,6 +3,7 @@ import { AppWindow, ChevronDown, ChevronRight, GripVertical, Inbox, Pencil, Pin,
 import type { TabRecord, WindowState, Workspace } from "../shared/contracts";
 import { tabHost, tabLabel } from "../ui-state/model";
 import type { TabFridgeSnapshot } from "../ui-state/model";
+import { workspaceColorClass } from "./workspaceColors";
 
 export type TabFilter = "all" | "unclassified";
 export type WindowScope = "all" | "current";
@@ -28,12 +29,6 @@ interface TabTreeProps {
 
 type DragPayload = { type: "tab" | "workspace"; id: string };
 type TabSectionKind = "fixed" | "unclassified" | "special";
-
-const WORKSPACE_COLORS = new Set(["slate", "blue", "cyan", "green", "amber", "rose", "violet"]);
-
-function workspaceColorName(color: string): string {
-  return WORKSPACE_COLORS.has(color) ? color : "slate";
-}
 
 function parseDrag(event: DragEvent): DragPayload | null {
   const raw = event.dataTransfer.getData("application/x-tab-fridge");
@@ -305,7 +300,7 @@ export function TabTree({
                   const acceptsDrop = acceptsTab || acceptsWorkspace;
                   return (
                     <div
-                      className={`tree-section workspace-section workspace-accent-${workspaceColorName(workspace.color)}${acceptsTab ? " drop-zone-tab" : ""}${acceptsWorkspace ? " drop-zone-workspace" : ""}${activeDropTarget === workspaceDropTarget ? " drag-active" : ""}${dragPayload?.type === "workspace" && dragPayload.id === workspace.id ? " dragging-source" : ""}`}
+                      className={`tree-section workspace-section workspace-accent-${workspaceColorClass(workspace.color)}${acceptsTab ? " drop-zone-tab" : ""}${acceptsWorkspace ? " drop-zone-workspace" : ""}${activeDropTarget === workspaceDropTarget ? " drag-active" : ""}${dragPayload?.type === "workspace" && dragPayload.id === workspace.id ? " dragging-source" : ""}`}
                       data-level="workspace"
                       key={workspace.id}
                       onDragEnter={(event) => {
@@ -341,7 +336,7 @@ export function TabTree({
                         >
                           <GripVertical className="drag-handle" aria-hidden="true" size={14} />
                           <span className="tree-chevron">{workspaceExpanded ? <ChevronDown aria-hidden="true" size={14} /> : <ChevronRight aria-hidden="true" size={14} />}</span>
-                          <span className={`workspace-dot workspace-dot-${workspaceColorName(workspace.color)}`} aria-hidden="true" />
+                          <span className={`workspace-dot workspace-dot-${workspaceColorClass(workspace.color)}`} aria-hidden="true" />
                           <span className="workspace-level">工作区</span>
                           <span className="workspace-name">{workspace.name}</span>
                           <span className="workspace-count">{workspaceTabs.length}</span>

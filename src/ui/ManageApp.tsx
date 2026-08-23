@@ -5,6 +5,7 @@ import { useTabFridgeState } from "../ui-state/useTabFridgeState";
 import { WorkspaceDialog } from "./WorkspaceDialog";
 import { createAIConfigStore } from "../ai/config";
 import { createOpenAICompatibleClient } from "../ai/client";
+import { workspaceColorClass } from "./workspaceColors";
 
 function sidepanelUrl(): string {
   try {
@@ -142,7 +143,7 @@ export function ManageApp() {
                   <article className="workspace-card" key={workspace.id}>
                     <div className="workspace-card-body">
                       <div className="workspace-card-heading">
-                        <span className={`workspace-dot workspace-dot-${workspace.color || "slate"}`} aria-hidden="true" />
+                        <span className={`workspace-dot workspace-dot-${workspaceColorClass(workspace.color)}`} aria-hidden="true" />
                         <h3>{workspace.name}</h3>
                         <span className="workspace-card-count">{tabsForWorkspace(workspace.id)} 标签</span>
                       </div>
