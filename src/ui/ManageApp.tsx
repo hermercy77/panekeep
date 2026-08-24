@@ -9,6 +9,7 @@ import { workspaceColorClass } from "./workspaceColors";
 import { useI18n } from "../i18n/react";
 import { APP_LANGUAGES, type AppLanguage } from "../i18n/catalog";
 import type { BackupImportSkippedTab } from "../shared/backup";
+import { WorkspaceIcon } from "./WorkspaceIcon";
 
 function sidepanelUrl(): string {
   try {
@@ -173,7 +174,7 @@ export function ManageApp() {
                   <article className="workspace-card" key={workspace.id}>
                     <div className="workspace-card-body">
                       <div className="workspace-card-heading">
-                        <span className={`workspace-dot workspace-dot-${workspaceColorClass(workspace.color)}`} aria-hidden="true" />
+                        <span className={`workspace-icon workspace-icon-${workspaceColorClass(workspace.color)}`} aria-hidden="true"><WorkspaceIcon icon={workspace.icon} size={15} /></span>
                         <h3>{workspace.name}</h3>
                         <span className="workspace-card-count">{t("common.tabsCount", { count: tabsForWorkspace(workspace.id) })}</span>
                       </div>

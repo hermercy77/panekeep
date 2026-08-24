@@ -5,6 +5,7 @@ import { tabHost, tabLabel } from "../ui-state/model";
 import type { TabFridgeSnapshot } from "../ui-state/model";
 import { workspaceColorClass } from "./workspaceColors";
 import { useI18n } from "../i18n/react";
+import { WorkspaceIcon } from "./WorkspaceIcon";
 
 export type TabFilter = "all" | "unclassified";
 export type WindowScope = "all" | "current";
@@ -372,7 +373,7 @@ export function TabTree({
                         >
                           <GripVertical className="drag-handle" aria-hidden="true" size={14} />
                           <span className="tree-chevron">{workspaceExpanded ? <ChevronDown aria-hidden="true" size={14} /> : <ChevronRight aria-hidden="true" size={14} />}</span>
-                          <span className={`workspace-dot workspace-dot-${workspaceColorClass(workspace.color)}`} aria-hidden="true" />
+                          <span className={`workspace-icon workspace-icon-${workspaceColorClass(workspace.color)}`} aria-hidden="true"><WorkspaceIcon icon={workspace.icon} /></span>
                           <span className="workspace-name">{workspace.name}</span>
                           <span className="workspace-count">{workspaceTabs.length}</span>
                         </button>

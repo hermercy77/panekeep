@@ -16,6 +16,7 @@ import {
 } from "./model";
 import { getAppLanguage, translate, type MessageKey } from "../i18n";
 import type { BackupImportResult } from "../shared/backup";
+import { normalizeWorkspaceIcon } from "../shared/workspaceAppearance";
 
 const DEFAULT_WORKSPACE_COLOR = "slate";
 export const ORGANIZATION_PREVIEW_BATCH_SIZE = 50;
@@ -128,6 +129,7 @@ function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabF
         description: draft.description.trim(),
         tags: draft.tags,
         color: draft.color || DEFAULT_WORKSPACE_COLOR,
+        icon: normalizeWorkspaceIcon(draft.icon),
         groupId: draft.groupId,
         order: snapshot.workspaces.filter((item) => item.windowKey === draft.windowKey).length,
         createdAt: timestamp,
@@ -147,6 +149,7 @@ function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabF
         description: draft.description === undefined ? current.description : draft.description.trim(),
         tags: draft.tags === undefined ? current.tags : draft.tags,
         color: draft.color || current.color,
+        icon: normalizeWorkspaceIcon(draft.icon ?? current.icon),
         updatedAt: now()
       };
       snapshot = {
@@ -212,7 +215,8 @@ function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabF
             name: group.name,
             description: group.description,
             tags: group.tags,
-            color: DEFAULT_WORKSPACE_COLOR
+            color: group.color,
+            icon: group.icon
           });
           workspaceId = created.id;
         }

@@ -204,7 +204,7 @@ describe("OrganizationDialog selection", () => {
       mode: "purpose" as const,
       sourceTabIds: ["tab-1"],
       sourceFingerprint: "fixture-fingerprint",
-      groups: [{ id: "group-1", name: "音乐", description: "", tags: [], existingWorkspaceId: null, tabIds: ["tab-1"] }],
+      groups: [{ id: "group-1", name: "音乐", description: "", tags: [], icon: "music" as const, color: "purple", existingWorkspaceId: null, tabIds: ["tab-1"] }],
       unclassifiedTabIds: []
     };
 
@@ -223,6 +223,8 @@ describe("OrganizationDialog selection", () => {
         onClose={vi.fn()}
       />
     ));
+
+    expect(host.querySelector(".workspace-icon-violet svg.lucide-music-2")).not.toBeNull();
 
     const regenerate = [...host.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent?.includes("重新生成"));

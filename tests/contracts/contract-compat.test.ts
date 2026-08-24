@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { organizationPreviewSchema, tabRecordSchema } from "../../src/shared/contracts";
+import { organizationPreviewSchema, tabRecordSchema, workspaceSchema } from "../../src/shared/contracts";
 import { normalizeGroupColor } from "../../src/shared/constants";
 
 describe("shared contract compatibility", () => {
@@ -39,5 +39,15 @@ describe("shared contract compatibility", () => {
     expect(normalizeGroupColor("violet")).toBe("purple");
     expect(normalizeGroupColor("blue")).toBe("blue");
     expect(normalizeGroupColor("unknown")).toBe("grey");
+  });
+
+  it("adds a folder icon when loading a workspace created before icons existed", () => {
+    expect(workspaceSchema.parse({
+      id: "workspace:legacy",
+      windowKey: "window:1",
+      name: "Legacy",
+      createdAt: 1,
+      updatedAt: 1
+    }).icon).toBe("folder");
   });
 });

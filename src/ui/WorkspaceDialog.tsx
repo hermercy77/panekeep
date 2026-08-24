@@ -5,6 +5,29 @@ import { normalizeGroupColor } from "../shared/constants";
 import type { WorkspaceDraft } from "../ui-state/model";
 import { WORKSPACE_COLOR_OPTIONS } from "./workspaceColors";
 import { useI18n } from "../i18n/react";
+import { WORKSPACE_ICON_KEYS, normalizeWorkspaceIcon, type WorkspaceIconKey } from "../shared/workspaceAppearance";
+import { WorkspaceIcon } from "./WorkspaceIcon";
+
+const ICON_LABEL_KEYS = {
+  folder: "icon.folder",
+  briefcase: "icon.briefcase",
+  code: "icon.code",
+  book: "icon.book",
+  search: "icon.search",
+  "file-text": "icon.fileText",
+  palette: "icon.palette",
+  message: "icon.message",
+  calendar: "icon.calendar",
+  plane: "icon.plane",
+  "shopping-cart": "icon.shoppingCart",
+  wallet: "icon.wallet",
+  chart: "icon.chart",
+  megaphone: "icon.megaphone",
+  media: "icon.media",
+  music: "icon.music",
+  home: "icon.home",
+  shield: "icon.shield"
+} as const;
 
 interface WorkspaceDialogProps {
   open: boolean;
@@ -21,6 +44,7 @@ export function WorkspaceDialog({ open, windowKey, workspace, busy = false, onCl
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState("");
   const [color, setColor] = useState("grey");
+  const [icon, setIcon] = useState<WorkspaceIconKey>("folder");
   const [showDetails, setShowDetails] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
@@ -30,6 +54,7 @@ export function WorkspaceDialog({ open, windowKey, workspace, busy = false, onCl
     setDescription(workspace?.description ?? "");
     setTags(workspace?.tags.join(", ") ?? "");
     setColor(normalizeGroupColor(workspace?.color));
+    setIcon(normalizeWorkspaceIcon(workspace?.icon));
     setShowDetails(Boolean(workspace?.description || workspace?.tags.length));
     setValidationError(null);
   }, [open, workspace]);
@@ -52,7 +77,8 @@ export function WorkspaceDialog({ open, windowKey, workspace, busy = false, onCl
         .split(",")
         .map((tag) => tag.trim())
         .filter(Boolean),
-      color
+      color,
+      icon
     });
   };
 
@@ -94,6 +120,25 @@ export function WorkspaceDialog({ open, windowKey, workspace, busy = false, onCl
                   aria-pressed={color === key}
                   onClick={() => setColor(key)}
                 />
+              ))}
+            </div>
+          </fieldset>
+          <fieldset className="field-group">
+            <legend className="field-label">{t("workspace.icon")}</legend>
+            <div className="icon-options">
+              {WORKSPACE_ICON_KEYS.map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  className="icon-option"
+                  data-selected={icon === key}
+                  aria-label={t("workspace.selectIcon", { icon: t(ICON_LABEL_KEYS[key]) })}
+                  aria-pressed={icon === key}
+                  disabled={busy}
+                  onClick={() => setIcon(key)}
+                >
+                  <WorkspaceIcon icon={key} size={16} />
+                </button>
               ))}
             </div>
           </fieldset>

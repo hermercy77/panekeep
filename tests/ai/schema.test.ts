@@ -12,6 +12,7 @@ describe("strict organization response validation", () => {
     const preview = validateOrganizationPreview(validOrganizationResponse, "purpose", ["tab-1", "tab-2", "tab-3"], "fixture-fingerprint");
     expect(preview.mode).toBe("purpose");
     expect(preview.sourceTabIds).toEqual(["tab-1", "tab-2", "tab-3"]);
+    expect(preview.groups[0]).toMatchObject({ icon: "folder", color: "grey" });
   });
 
   it("rejects Markdown fences instead of extracting JSON from them", () => {

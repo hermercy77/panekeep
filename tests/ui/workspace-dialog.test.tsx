@@ -31,6 +31,8 @@ describe("WorkspaceDialog progressive details", () => {
     expect(host.querySelector("#workspace-name")).not.toBeNull();
     expect(host.querySelector("#workspace-description")).toBeNull();
     expect(host.querySelector("#workspace-tags")).toBeNull();
+    expect(host.querySelectorAll(".icon-option")).toHaveLength(18);
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="选择文件夹图标"]')?.dataset.selected).toBe("true");
 
     const details = [...host.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent?.includes("描述与标签"));
@@ -52,6 +54,7 @@ describe("WorkspaceDialog progressive details", () => {
       description: "发布前检查",
       tags: ["本周"],
       color: "blue",
+      icon: "briefcase",
       groupId: 1,
       order: 0,
       createdAt: 1,
@@ -70,6 +73,7 @@ describe("WorkspaceDialog progressive details", () => {
 
     expect(host.querySelector<HTMLTextAreaElement>("#workspace-description")?.value).toBe("发布前检查");
     expect(host.querySelector<HTMLInputElement>("#workspace-tags")?.value).toBe("本周");
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="选择办公图标"]')?.dataset.selected).toBe("true");
     await act(async () => root.unmount());
   });
 });

@@ -30,6 +30,7 @@ import { organizeTabs } from "../ai/pipeline";
 import { fingerprintTabs } from "../ai/snapshot";
 import { organizationPreviewSchema } from "../shared/contracts";
 import { getAppLanguage, translate } from "../i18n";
+import { assignWorkspaceColors, inferWorkspaceIcon, normalizeWorkspaceIcon } from "../shared/workspaceAppearance";
 
 export interface BrowserStateEngineOptions {
   api?: BrowserLike;
@@ -46,6 +47,7 @@ export interface WorkspaceInput {
   description?: string;
   tags?: string[];
   color?: string;
+  icon?: string;
   tabIds?: string[];
 }
 
@@ -54,6 +56,7 @@ export interface WorkspacePatch {
   description?: string;
   tags?: string[];
   color?: string;
+  icon?: string;
   order?: number;
 }
 
@@ -208,6 +211,9 @@ export class BrowserStateEngine {
       description: input.description ?? "",
       tags: [...(input.tags ?? [])],
       color: normalizeGroupColor(input.color),
+      icon: input.icon
+        ? normalizeWorkspaceIcon(input.icon)
+        : inferWorkspaceIcon([name, input.description ?? "", ...(input.tags ?? [])]),
       order: this.nextWorkspaceOrder(targetWindow.key),
       createdAt: this.now(),
       updatedAt: this.now()
@@ -264,6 +270,7 @@ export class BrowserStateEngine {
       ...patch,
       name: nextName,
       color: normalizeGroupColor(patch.color ?? workspace.color),
+      icon: normalizeWorkspaceIcon(patch.icon ?? workspace.icon),
       tags: patch.tags ? [...patch.tags] : workspace.tags,
       updatedAt: this.now()
     });
@@ -619,6 +626,7 @@ export class BrowserStateEngine {
           description: payload.description,
           tags: payload.tags,
           color: payload.color,
+          icon: payload.icon,
           tabIds: payload.tabIds
         });
         break;
@@ -679,7 +687,7 @@ export class BrowserStateEngine {
       this.organizationControllers.set(requestId, controller);
     }
     try {
-      return await organizeTabs({
+      const preview = await organizeTabs({
         tabs: eligible,
         mode,
         config,
@@ -688,6 +696,23 @@ export class BrowserStateEngine {
         language: getAppLanguage(),
         getCurrentTabs: () => this.state.tabs.filter((tab) => eligible.some((item) => item.id === tab.id)),
         signal: controller.signal
+      });
+      const targetWindowKey = this.state.windows.find((window) => window.isCurrent)?.key ?? this.state.windows[0]?.key;
+      const existingColors = this.state.workspaces
+        .filter((workspace) => workspace.windowKey === targetWindowKey)
+        .map((workspace) => workspace.color);
+      const suggestedColors = assignWorkspaceColors(existingColors, preview.groups.filter((group) => !group.existingWorkspaceId).length);
+      let suggestedColorIndex = 0;
+      return organizationPreviewSchema.parse({
+        ...preview,
+        groups: preview.groups.map((group) => {
+          const existing = group.existingWorkspaceId
+            ? this.state.workspaces.find((workspace) => workspace.id === group.existingWorkspaceId)
+            : undefined;
+          if (existing) return { ...group, color: existing.color, icon: existing.icon };
+          const icon = inferWorkspaceIcon([group.name, group.description, ...group.tags]);
+          return { ...group, icon, color: suggestedColors[suggestedColorIndex++] ?? "grey" };
+        })
       });
     } finally {
       if (requestId && this.organizationControllers.get(requestId) === controller) {
@@ -747,7 +772,8 @@ export class BrowserStateEngine {
             name: group.name,
             description: group.description,
             tags: group.tags,
-            color: "grey"
+            color: group.color,
+            icon: group.icon
           });
           workspaceId = created.id;
         }
@@ -893,6 +919,9 @@ export class BrowserStateEngine {
           description: previousWorkspace?.description ?? "",
           tags: [...(previousWorkspace?.tags ?? [])],
           color: normalizeGroupColor(group.color ?? previousWorkspace?.color),
+          icon: previousWorkspace?.icon
+            ? normalizeWorkspaceIcon(previousWorkspace.icon)
+            : inferWorkspaceIcon([group.title?.trim() ?? ""]),
           groupId,
           order: groupIndex,
           createdAt: previousWorkspace?.createdAt ?? this.now(),

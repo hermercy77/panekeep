@@ -571,6 +571,37 @@ describe("BrowserStateEngine with Chromium state", () => {
     await engine.stop();
   });
 
+  it("applies the suggested icon and non-grey color to an AI-created workspace", async () => {
+    const fake = new FakeBrowser([
+      { id: 1, type: "normal", focused: true, tabs: [tab(101, 1, { active: true }), tab(102, 1, { index: 1 })] }
+    ], []);
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+    const sourceTabs = engine.getState().tabs;
+    const preview = {
+      mode: "purpose" as const,
+      sourceTabIds: ["101", "102"],
+      sourceFingerprint: fingerprintTabs(sourceTabs),
+      groups: [{
+        id: "development",
+        name: "Development",
+        description: "Active implementation work",
+        tags: ["development"],
+        icon: "code" as const,
+        color: "green",
+        existingWorkspaceId: null,
+        tabIds: ["101", "102"]
+      }],
+      unclassifiedTabIds: []
+    };
+
+    await engine.handleUiAction({ action: "organization.apply", payload: { preview, targetWindowKey: "window:1" } });
+
+    expect(engine.getState().workspaces[0]).toMatchObject({ name: "Development", icon: "code", color: "green" });
+    expect(fake.groupUpdates.at(-1)?.changes).toMatchObject({ title: "Development", color: "green" });
+    await engine.stop();
+  });
+
   it("rejects a preview when a selected tab changes before confirmation", async () => {
     const fake = new FakeBrowser([
       { id: 1, type: "normal", focused: true, tabs: [tab(101, 1, { groupId: 10, active: true })] }

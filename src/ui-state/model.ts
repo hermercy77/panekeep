@@ -21,6 +21,7 @@ export interface WorkspaceDraft {
   description: string;
   tags: string[];
   color: string;
+  icon: Workspace["icon"];
   groupId?: number;
 }
 

@@ -230,6 +230,25 @@ svg { display: block; flex: 0 0 auto; }
 .drag-handle { color: var(--color-subtle); cursor: grab; }
 .workspace-level { flex: 0 0 auto; padding-inline-end: var(--space-xs); border-inline-end: var(--rule-thin) solid var(--color-rule); color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 500; white-space: nowrap; }
 .workspace-name { min-width: 0; display: block; flex: 1; overflow: hidden; color: inherit; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-icon {
+  --workspace-icon-color: var(--color-workspace-slate);
+  width: 1.4rem;
+  height: 1.4rem;
+  display: grid;
+  place-items: center;
+  flex: 0 0 1.4rem;
+  border: var(--rule-thin) solid color-mix(in srgb, var(--workspace-icon-color) 34%, var(--color-rule));
+  border-radius: var(--radius-xs);
+  color: var(--workspace-icon-color);
+  background: color-mix(in srgb, var(--workspace-icon-color) 10%, var(--color-surface));
+}
+.workspace-icon-slate { --workspace-icon-color: var(--color-workspace-slate); }
+.workspace-icon-blue { --workspace-icon-color: var(--color-workspace-blue); }
+.workspace-icon-cyan { --workspace-icon-color: var(--color-workspace-cyan); }
+.workspace-icon-green { --workspace-icon-color: var(--color-workspace-green); }
+.workspace-icon-amber { --workspace-icon-color: var(--color-workspace-amber); }
+.workspace-icon-rose { --workspace-icon-color: var(--color-workspace-rose); }
+.workspace-icon-violet { --workspace-icon-color: var(--color-workspace-violet); }
 .workspace-dot { width: .5rem; height: .5rem; flex: 0 0 .5rem; border-radius: 50%; background: var(--color-workspace-slate); }
 .workspace-dot-slate { background: var(--color-workspace-slate); }
 .workspace-dot-blue { background: var(--color-workspace-blue); }
@@ -333,6 +352,20 @@ svg { display: block; flex: 0 0 auto; }
 .color-options { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
 .color-option { width: 2.75rem; height: 2.75rem; border: var(--rule-thin) solid var(--color-rule-strong); border-radius: var(--radius-sm); background: var(--option-color); outline: 2px solid transparent; outline-offset: 2px; }
 .color-option[data-selected="true"] { outline-color: var(--color-focus); }
+.icon-options { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: var(--space-2xs); }
+.icon-option {
+  min-width: 0;
+  height: 2.25rem;
+  display: grid;
+  place-items: center;
+  border: var(--rule-thin) solid var(--color-rule);
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  background: var(--color-surface);
+  transition: color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out), transform var(--dur-micro) var(--ease-out);
+}
+.icon-option[data-selected="true"] { border-color: var(--color-accent); color: var(--color-accent); background: var(--color-accent-soft); }
+.icon-option:active { transform: translateY(1px); }
 .color-option-slate { --option-color: var(--color-workspace-slate); }
 .color-option-grey { --option-color: var(--color-workspace-slate); }
 .color-option-blue { --option-color: var(--color-workspace-blue); }
@@ -449,7 +482,7 @@ svg { display: block; flex: 0 0 auto; }
 @keyframes dialog-in { from { opacity: 0; transform: scale(.98); } }
 
 @media (hover: hover) and (pointer: fine) {
-  .icon-button:hover, .mini-icon-button:hover, .filter-chip:hover, .manage-nav-item:hover, .mini-button:hover, .details-toggle:hover, .workspace-menu-list button:hover { color: var(--color-ink); background: var(--color-paper-3); }
+  .icon-button:hover, .mini-icon-button:hover, .filter-chip:hover, .manage-nav-item:hover, .mini-button:hover, .details-toggle:hover, .workspace-menu-list button:hover, .icon-option:hover { color: var(--color-ink); background: var(--color-paper-3); }
   .mode-option:hover, .selection-item:hover { background: var(--color-paper-2); }
   .mode-option.selected:hover, .selection-item:has(input:checked):hover { background: var(--color-accent-soft); }
   .button-primary:hover { background: var(--color-ink); color: var(--color-paper); }

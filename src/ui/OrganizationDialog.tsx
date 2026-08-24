@@ -3,6 +3,8 @@ import { Check, ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import type { OrganizationMode, OrganizationPreview, TabRecord } from "../shared/contracts";
 import { tabLabel } from "../ui-state/model";
 import { useI18n } from "../i18n/react";
+import { WorkspaceIcon } from "./WorkspaceIcon";
+import { workspaceColorClass } from "./workspaceColors";
 
 interface OrganizationDialogProps {
   open: boolean;
@@ -157,7 +159,7 @@ export function OrganizationDialog({
                     <div className="preview-group" key={group.id}>
                       <button className="preview-group-heading" type="button" onClick={() => toggleGroup(group.id)} aria-expanded={expanded}>
                         <span className="tree-chevron">{expanded ? <ChevronDown aria-hidden="true" size={14} /> : <ChevronRight aria-hidden="true" size={14} />}</span>
-                        <span className="workspace-dot workspace-dot-slate" aria-hidden="true" />
+                        <span className={`workspace-icon workspace-icon-${workspaceColorClass(group.color)}`} aria-hidden="true"><WorkspaceIcon icon={group.icon} /></span>
                         <strong>{group.name}</strong>
                         <span className="count-badge">{group.tabIds.length}</span>
                       </button>
