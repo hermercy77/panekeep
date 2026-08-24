@@ -1,6 +1,6 @@
 import { aiConfigSchema, type AIConfig } from "../shared/contracts";
 import { AIConfigError } from "./errors";
-import { getAppLanguage, translate, type AppLanguage } from "../i18n";
+import { getAppLanguage, translate } from "../i18n";
 import { inferAIProviderId } from "./providers";
 
 export const DEFAULT_AI_CONFIG: AIConfig = {
@@ -12,26 +12,6 @@ export const DEFAULT_AI_CONFIG: AIConfig = {
 
 /** The key is deliberately kept in storage.local, never storage.sync. */
 export const AI_CONFIG_STORAGE_KEY = "tab-fridge.ai-config";
-
-export interface ModelAvailabilityNotice {
-  tone: "success" | "error";
-  message: string;
-}
-
-export function describeModelAvailability(
-  model: string,
-  models: readonly string[],
-  language: AppLanguage = getAppLanguage()
-): ModelAvailabilityNotice {
-  const available = [...new Set(models.filter(Boolean))];
-  if (!available.length) return { tone: "success", message: translate(language, "ai.connectionNoModels") };
-  if (!model) return { tone: "success", message: translate(language, "manage.modelsLoaded", { count: available.length }) };
-  if (available.includes(model)) return { tone: "success", message: translate(language, "ai.connectionModels", { count: available.length }) };
-  return {
-    tone: "error",
-    message: translate(language, "ai.modelUnavailable", { model, models: available.join(language === "zh-CN" ? "、" : ", ") })
-  };
-}
 
 export interface StorageAreaLike {
   get(

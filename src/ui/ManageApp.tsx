@@ -3,7 +3,7 @@ import { ArrowLeft, CircleAlert, CircleCheck, DatabaseBackup, Download, Plus, Ro
 import { isWorkspaceClosableTab, type AIConfig, type Workspace } from "../shared/contracts";
 import { useTabFridgeState } from "../ui-state/useTabFridgeState";
 import { WorkspaceDialog } from "./WorkspaceDialog";
-import { createAIConfigStore, DEFAULT_AI_CONFIG, describeModelAvailability, type ModelAvailabilityNotice } from "../ai/config";
+import { createAIConfigStore, DEFAULT_AI_CONFIG } from "../ai/config";
 import { createOpenAICompatibleClient } from "../ai/client";
 import { AI_PROVIDER_PRESETS, getAIProviderPreset, inferAIProviderId } from "../ai/providers";
 import { workspaceColorClass } from "./workspaceColors";
@@ -29,10 +29,9 @@ export function ManageApp() {
   const [dialog, setDialog] = useState<{ windowKey: string; workspace?: Workspace } | null>(null);
   const [busy, setBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Workspace | null>(null);
-  const [notice, setNotice] = useState<ModelAvailabilityNotice | null>(null);
+  const [notice, setNotice] = useState<{ tone: "success" | "error"; message: string } | null>(null);
   const [aiConfig, setAiConfig] = useState<AIConfig>(DEFAULT_AI_CONFIG);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [modelEntryMode, setModelEntryMode] = useState<"list" | "manual">("manual");
   const [testingAI, setTestingAI] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [skippedImportTabs, setSkippedImportTabs] = useState<BackupImportSkippedTab[]>([]);
@@ -111,14 +110,12 @@ export function ManageApp() {
       model: ""
     });
     setAvailableModels([]);
-    setModelEntryMode("manual");
     setNotice(null);
   };
 
   const changeBaseUrl = (baseUrl: string) => {
     setAiConfig({ ...aiConfig, baseUrl, providerId: inferAIProviderId(baseUrl) });
     setAvailableModels([]);
-    setModelEntryMode("manual");
   };
 
   const testAI = async () => {
@@ -129,14 +126,15 @@ export function ManageApp() {
       const result = await createOpenAICompatibleClient(config).testConnection();
       setAiConfig(config);
       setAvailableModels(result.models);
-      if (result.models.length) {
-        setModelEntryMode(config.model && !result.models.includes(config.model) ? "manual" : "list");
-      } else {
-        setModelEntryMode("manual");
-      }
-      setNotice(result.models.length
-        ? describeModelAvailability(config.model, result.models, language)
-        : { tone: "success", message: t("manage.noModelsLoaded") });
+      const configuredModelMissing = Boolean(config.model && result.models.length && !result.models.includes(config.model));
+      setNotice({
+        tone: configuredModelMissing ? "error" : "success",
+        message: t(configuredModelMissing
+          ? "notice.configuredModelUnavailable"
+          : result.models.length
+            ? "notice.connectionSucceeded"
+            : "notice.connectionSucceededNoModels")
+      });
     } catch (error) {
       setNotice({ tone: "error", message: error instanceof Error ? error.message : t("notice.connectionFailed") });
     } finally {
@@ -240,19 +238,15 @@ export function ManageApp() {
               </select>
               <label className="field-label" htmlFor="ai-base-url">{t("manage.baseUrl")}</label>
               <input id="ai-base-url" className="text-input" disabled={testingAI} value={aiConfig.baseUrl} onChange={(event) => changeBaseUrl(event.target.value)} />
-              <div className="form-columns">
-                <div>
-                  <div className="field-label-row"><label className="field-label" htmlFor="ai-model">{t("manage.model")}</label>{availableModels.length ? <button className="field-mode-button" type="button" disabled={testingAI} onClick={() => setModelEntryMode(modelEntryMode === "list" ? "manual" : "list")}>{modelEntryMode === "list" ? t("manage.manualModel") : t("manage.useDetectedModels")}</button> : null}</div>
-                  {modelEntryMode === "list" && availableModels.length ? (
-                    <select id="ai-model" className="text-input" disabled={testingAI} value={aiConfig.model} onChange={(event) => setAiConfig({ ...aiConfig, model: event.target.value })}>
-                      <option value="">{t("manage.selectModel")}</option>
-                      {availableModels.map((model) => <option key={model} value={model}>{model}</option>)}
-                    </select>
-                  ) : <input id="ai-model" className="text-input" disabled={testingAI} value={aiConfig.model} onChange={(event) => setAiConfig({ ...aiConfig, model: event.target.value })} placeholder={t("manage.modelPlaceholder")} />}
-                </div>
-                <div><label className="field-label" htmlFor="ai-key">{t("manage.apiKey")}</label><input id="ai-key" className="text-input" disabled={testingAI} type="password" value={aiConfig.apiKey} onChange={(event) => setAiConfig({ ...aiConfig, apiKey: event.target.value })} placeholder={t("manage.keyPlaceholder")} /></div>
+              <label className="field-label" htmlFor="ai-key">{t("manage.apiKey")}</label>
+              <div className="api-key-input-wrap">
+                <input id="ai-key" className="text-input" disabled={testingAI} type="password" value={aiConfig.apiKey} onChange={(event) => setAiConfig({ ...aiConfig, apiKey: event.target.value })} placeholder={t("manage.keyPlaceholder")} />
+                <button className="connection-test-button" type="button" onClick={() => void testAI()} disabled={testingAI}>{testingAI ? t("manage.testingCompact") : t("manage.testConnection")}</button>
               </div>
-              <div className="settings-actions"><span>{availableModels.length ? t("manage.modelsLoaded", { count: availableModels.length }) : t("manage.testToLoadModels")}</span><div className="button-row"><button className="button button-ghost" type="button" onClick={() => void testAI()} disabled={testingAI}>{testingAI ? t("manage.testing") : t("manage.testConnection")}</button><button className="button button-primary" type="button" disabled={testingAI} onClick={() => void saveAI()}>{t("manage.saveSettings")}</button></div></div>
+              <label className="field-label" htmlFor="ai-model">{t("manage.model")}</label>
+              <input id="ai-model" className="text-input" list={availableModels.length ? "ai-model-options" : undefined} disabled={testingAI} value={aiConfig.model} onChange={(event) => setAiConfig({ ...aiConfig, model: event.target.value })} placeholder={t("manage.modelPlaceholder")} autoComplete="off" />
+              <datalist id="ai-model-options">{availableModels.map((model) => <option key={model} value={model} />)}</datalist>
+              <div className="settings-actions"><button className="button button-primary" type="button" disabled={testingAI} onClick={() => void saveAI()}>{t("manage.saveSettings")}</button></div>
             </div>
           </section>
 

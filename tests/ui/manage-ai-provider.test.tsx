@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 describe("ManageApp AI provider settings", () => {
-  it("loads models after testing and keeps manual entry available", async () => {
+  it("loads model suggestions into one editable field without extra mode controls", async () => {
     const values: Record<string, unknown> = {
       "tab-fridge.language": "zh-CN",
       [AI_CONFIG_STORAGE_KEY]: {
@@ -64,33 +64,37 @@ describe("ManageApp AI provider settings", () => {
       root.render(<ManageApp />);
       await Promise.resolve();
     });
-    const testButton = [...host.querySelectorAll("button")].find((button) => button.textContent === "测试连接");
+    const modelInput = host.querySelector<HTMLInputElement>("#ai-model")!;
+    expect(modelInput.tagName).toBe("INPUT");
+    expect(modelInput.placeholder).toBe("测试连接通过将返回可用模型列表");
+    const testButton = host.querySelector<HTMLButtonElement>(".api-key-input-wrap .connection-test-button");
+    expect(testButton?.textContent).toBe("测试连接");
+    expect(host.querySelectorAll(".settings-actions button")).toHaveLength(1);
+    expect(host.querySelector(".settings-actions button")?.textContent).toBe("保存设置");
     await act(async () => {
       testButton?.click();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    const modelSelect = host.querySelector<HTMLSelectElement>("#ai-model");
-    expect(modelSelect?.tagName).toBe("SELECT");
-    expect([...modelSelect!.options].map((option) => option.value)).toEqual(["", "gpt-fast", "gpt-precise"]);
-    expect(host.textContent).toContain("已检测到 2 个可用模型");
-
-    const manualButton = [...host.querySelectorAll("button")].find((button) => button.textContent === "手动输入");
-    await act(async () => manualButton?.click());
-    const manualInput = host.querySelector<HTMLInputElement>("#ai-model")!;
-    expect(manualInput.placeholder).toContain("gpt-4o-mini");
+    expect(modelInput.getAttribute("list")).toBe("ai-model-options");
+    expect([...host.querySelectorAll<HTMLOptionElement>("#ai-model-options option")].map((option) => option.value)).toEqual(["gpt-fast", "gpt-precise"]);
+    expect(host.textContent).toContain("连接成功");
+    expect(host.textContent).not.toContain("已检测到 2 个可用模型");
+    expect(host.textContent).not.toContain("手动输入");
 
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(manualInput, "private-model-alias");
-      manualInput.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(modelInput, "private-model-alias");
+      modelInput.dispatchEvent(new Event("input", { bubbles: true }));
       await Promise.resolve();
     });
     await act(async () => {
       testButton?.click();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(host.querySelector<HTMLInputElement>("#ai-model")?.value).toBe("private-model-alias");
+    expect(modelInput.value).toBe("private-model-alias");
     expect(values[AI_CONFIG_STORAGE_KEY]).toMatchObject({ model: "private-model-alias" });
+    expect(host.textContent).toContain("连接成功，但当前模型不在可用列表中");
+    expect(host.textContent).not.toContain("gpt-fast、gpt-precise");
 
     await act(async () => root.unmount());
   });
