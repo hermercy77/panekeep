@@ -82,6 +82,26 @@ function workspaceDropZone(event: DragEvent, crossWindow: boolean): WorkspaceDro
   return "merge";
 }
 
+export function dragAutoScrollVelocity(
+  clientY: number,
+  top: number,
+  bottom: number,
+  edgeSize = 64,
+  maxSpeed = 18
+): number {
+  if (!Number.isFinite(clientY) || bottom <= top || edgeSize <= 0 || maxSpeed <= 0) return 0;
+  const activeEdgeSize = Math.min(edgeSize, (bottom - top) / 2);
+  if (clientY < top + activeEdgeSize) {
+    const intensity = Math.min(1, Math.max(0, (top + activeEdgeSize - clientY) / activeEdgeSize));
+    return -Math.max(2, Math.ceil(maxSpeed * intensity));
+  }
+  if (clientY > bottom - activeEdgeSize) {
+    const intensity = Math.min(1, Math.max(0, (clientY - (bottom - activeEdgeSize)) / activeEdgeSize));
+    return Math.max(2, Math.ceil(maxSpeed * intensity));
+  }
+  return 0;
+}
+
 function tabMatches(tab: TabRecord, query: string, filter: TabFilter): boolean {
   if (filter === "unclassified" && (tab.workspaceId !== null || tab.pinned || tab.kind !== "normal")) return false;
   if (!query.trim()) return true;
@@ -180,6 +200,9 @@ function TabRow({
       <button
         className="tab-activate"
         type="button"
+        draggable={canDrag}
+        onDragStart={canDrag ? onDragStart : undefined}
+        onDragEnd={canDrag ? onDragEnd : undefined}
         onClick={onActivate}
         title={[tabLabel(tab), tab.url, tab.specialReason, lastVisitedLabel].filter(Boolean).join("\n")}
       >
@@ -265,6 +288,9 @@ export function TabTree({
   const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(null);
   const activeDropTargetRef = useRef<string | null>(null);
   const workspaceExpandTimerRef = useRef<number | null>(null);
+  const treeRef = useRef<HTMLDivElement | null>(null);
+  const autoScrollFrameRef = useRef<number | null>(null);
+  const autoScrollVelocityRef = useRef(0);
   useEffect(() => {
     const timer = window.setInterval(() => setTimeNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
@@ -352,9 +378,58 @@ export function TabTree({
     setActiveDropTarget(target);
   };
 
+  const stopAutoScroll = () => {
+    autoScrollVelocityRef.current = 0;
+    if (autoScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(autoScrollFrameRef.current);
+      autoScrollFrameRef.current = null;
+    }
+  };
+
+  const runAutoScrollFrame = () => {
+    const panel = treeRef.current?.closest(".tree-panel");
+    if (!(panel instanceof HTMLElement) || autoScrollVelocityRef.current === 0) {
+      autoScrollFrameRef.current = null;
+      return;
+    }
+    panel.scrollTop += autoScrollVelocityRef.current;
+    autoScrollFrameRef.current = window.requestAnimationFrame(runAutoScrollFrame);
+  };
+
+  const updateAutoScroll = (clientY: number) => {
+    const panel = treeRef.current?.closest(".tree-panel");
+    if (!(panel instanceof HTMLElement)) return;
+    const bounds = panel.getBoundingClientRect();
+    autoScrollVelocityRef.current = dragAutoScrollVelocity(clientY, bounds.top, bounds.bottom);
+    if (autoScrollVelocityRef.current === 0) {
+      stopAutoScroll();
+      return;
+    }
+    if (autoScrollFrameRef.current === null) {
+      autoScrollFrameRef.current = window.requestAnimationFrame(runAutoScrollFrame);
+    }
+  };
+
+  useEffect(() => {
+    if (!dragPayload) {
+      stopAutoScroll();
+      return;
+    }
+    const handleDragOver = (event: Event) => updateAutoScroll((event as MouseEvent).clientY);
+    const handleStop = () => stopAutoScroll();
+    window.addEventListener("dragover", handleDragOver, true);
+    window.addEventListener("drop", handleStop, true);
+    return () => {
+      window.removeEventListener("dragover", handleDragOver, true);
+      window.removeEventListener("drop", handleStop, true);
+      stopAutoScroll();
+    };
+  }, [dragPayload]);
+
   const finishDrag = (event?: DragEvent) => {
     event?.stopPropagation();
     clearWorkspaceExpandTimer();
+    stopAutoScroll();
     setDropTarget(null);
     setDragPayload(null);
   };
@@ -423,7 +498,7 @@ export function TabTree({
   );
 
   return (
-    <div className={`tree${dragPayload ? ` dragging-${dragPayload.type}` : ""}`} aria-label={t("tree.label")}>
+    <div ref={treeRef} className={`tree${dragPayload ? ` dragging-${dragPayload.type}` : ""}`} aria-label={t("tree.label")}>
       <span className="sr-only" aria-live="polite">
         {dragPayload?.type === "tabs" ? t("tree.movingTabs", { count: dragPayload.ids.length }) : dragPayload?.type === "workspace" ? t("tree.movingWorkspace") : ""}
       </span>

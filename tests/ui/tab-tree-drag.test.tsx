@@ -3,7 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TabTree } from "../../src/ui/TabTree";
+import { TabTree, dragAutoScrollVelocity } from "../../src/ui/TabTree";
 import type { TabFridgeSnapshot } from "../../src/ui-state/model";
 import { setAppLanguage } from "../../src/i18n";
 
@@ -56,6 +56,16 @@ afterEach(async () => {
 });
 
 describe("TabTree drag and drop", () => {
+  it("calculates continuous auto-scroll in both edge directions", () => {
+    expect(dragAutoScrollVelocity(105, 100, 500)).toBeLessThan(0);
+    expect(dragAutoScrollVelocity(495, 100, 500)).toBeGreaterThan(0);
+    expect(dragAutoScrollVelocity(300, 100, 500)).toBe(0);
+    expect(Math.abs(dragAutoScrollVelocity(0, 100, 500))).toBeLessThanOrEqual(18);
+    expect(dragAutoScrollVelocity(105, 100, 160)).toBeLessThan(0);
+    expect(dragAutoScrollVelocity(155, 100, 160)).toBeGreaterThan(0);
+    expect(dragAutoScrollVelocity(130, 100, 160)).toBe(0);
+  });
+
   it("changes selection only through checkboxes and supports Shift ranges", async () => {
     const host = document.createElement("div");
     document.body.append(host);
@@ -202,7 +212,9 @@ describe("TabTree drag and drop", () => {
     expect(workspaces[0].getAttribute("draggable")).toBeNull();
 
     const toWorkspace = new TestDataTransfer();
-    await act(async () => dispatchDrag(source!, "dragstart", toWorkspace));
+    const sourceHandle = source?.querySelector<HTMLButtonElement>(".tab-activate");
+    expect(sourceHandle?.draggable).toBe(true);
+    await act(async () => dispatchDrag(sourceHandle!, "dragstart", toWorkspace));
     expect(JSON.parse(toWorkspace.getData("application/x-tab-fridge"))).toEqual({ type: "tabs", ids: ["tab-a"], anchorId: "tab-a" });
     expect(workspaces[1].classList.contains("drop-zone-tab")).toBe(true);
 
@@ -270,6 +282,68 @@ describe("TabTree drag and drop", () => {
     expect(onMoveTabs).toHaveBeenCalledWith(["tab-loose"], null, "window:2");
 
     await act(async () => root.unmount());
+  });
+
+  it("auto-scrolls the tree panel while a drag stays near its bottom edge", async () => {
+    const host = document.createElement("div");
+    host.className = "tree-panel";
+    document.body.append(host);
+    Object.defineProperty(host, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 100, bottom: 500, left: 0, right: 320, width: 320, height: 400, x: 0, y: 100, toJSON: () => ({}) })
+    });
+    host.scrollTop = 100;
+    const frames: FrameRequestCallback[] = [];
+    const requestDescriptor = Object.getOwnPropertyDescriptor(window, "requestAnimationFrame");
+    const cancelDescriptor = Object.getOwnPropertyDescriptor(window, "cancelAnimationFrame");
+    Object.defineProperty(window, "requestAnimationFrame", {
+      configurable: true,
+      value: vi.fn((callback: FrameRequestCallback) => {
+        frames.push(callback);
+        return frames.length;
+      })
+    });
+    Object.defineProperty(window, "cancelAnimationFrame", { configurable: true, value: vi.fn() });
+    const root = createRoot(host);
+
+    await act(async () => root.render(
+      <TabTree
+        snapshot={snapshot}
+        query=""
+        filter="all"
+        windowScope="all"
+        workspaceTag=""
+        expandedWindows={new Set(["window:1"])}
+        expandedWorkspaces={new Set(["ws-a", "ws-b"])}
+        selectedTabId={null}
+        checkedTabIds={new Set()}
+        onToggleWindow={vi.fn()}
+        onToggleWorkspace={vi.fn()}
+        onActivateTab={vi.fn()}
+        onCheckedTabIdsChange={vi.fn()}
+        onMoveTabs={vi.fn()}
+        onMoveWorkspace={vi.fn()}
+        onRequestWorkspaceMerge={vi.fn()}
+        onEditWorkspace={vi.fn()}
+        onDeleteWorkspace={vi.fn()}
+        onCreateWorkspace={vi.fn()}
+      />
+    ));
+    const source = host.querySelector<HTMLElement>(".tab-activate");
+    const transfer = new TestDataTransfer();
+    await act(async () => dispatchDrag(source!, "dragstart", transfer));
+    const edgeEvent = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(edgeEvent, "clientY", { value: 495 });
+    await act(async () => window.dispatchEvent(edgeEvent));
+    expect(frames).toHaveLength(1);
+    frames.shift()?.(0);
+    expect(host.scrollTop).toBeGreaterThan(100);
+    await act(async () => dispatchDrag(source!, "dragend", transfer));
+    await act(async () => root.unmount());
+    if (requestDescriptor) Object.defineProperty(window, "requestAnimationFrame", requestDescriptor);
+    else delete (window as Partial<Window>).requestAnimationFrame;
+    if (cancelDescriptor) Object.defineProperty(window, "cancelAnimationFrame", cancelDescriptor);
+    else delete (window as Partial<Window>).cancelAnimationFrame;
   });
 
   it("keeps a workspace visible when the query matches one of its tabs", async () => {
