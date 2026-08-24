@@ -118,10 +118,12 @@ class FakeBrowser {
           window.tabs.push(created);
           return { ...created };
         },
-        remove: async (tabId: number) => {
-          const found = findTab(tabId);
-          found.window.tabs.splice(found.window.tabs.indexOf(found.tab), 1);
-          reindex(found.window);
+        remove: async (tabIds: number | number[]) => {
+          for (const tabId of Array.isArray(tabIds) ? tabIds : [tabIds]) {
+            const found = findTab(tabId);
+            found.window.tabs.splice(found.window.tabs.indexOf(found.tab), 1);
+            reindex(found.window);
+          }
           cleanupGroups();
         },
         discard: async (tabId: number) => {
@@ -543,6 +545,28 @@ describe("BrowserStateEngine with Chromium state", () => {
     expect(fake.windows[0].tabs[0].groupId).toBe(-1);
     expect(engine.getState().workspaces).toEqual([]);
     expect(engine.getState().tabs[0]).toMatchObject({ id: "101", workspaceId: null, kind: "normal" });
+    await engine.stop();
+  });
+
+  it("deletes a workspace and closes its tabs when explicitly requested", async () => {
+    const fake = new FakeBrowser([
+      { id: 1, type: "normal", focused: true, tabs: [
+        tab(101, 1, { groupId: 10, active: true }),
+        tab(102, 1, { groupId: 10, index: 1 }),
+        tab(103, 1, { groupId: -1, index: 2 })
+      ] }
+    ], [{ id: 10, windowId: 1, title: "Current work", color: "blue" }]);
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+
+    await engine.handleUiAction({
+      action: "workspace.delete",
+      payload: { id: engine.getState().workspaces[0].id, closeTabs: true }
+    });
+
+    expect(fake.windows[0].tabs.map((item) => item.id)).toEqual([103]);
+    expect(engine.getState().workspaces).toEqual([]);
+    expect(engine.getState().tabs.map((item) => item.id)).toEqual(["103"]);
     await engine.stop();
   });
 

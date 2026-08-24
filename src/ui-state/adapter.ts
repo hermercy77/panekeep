@@ -5,6 +5,7 @@ import type {
   Workspace,
   WorkspaceMergePreview
 } from "../shared/contracts";
+import { isWorkspaceClosableTab } from "../shared/contracts";
 import { UI_MESSAGE_SOURCE, isStateUpdatedMessage } from "../shared/messages";
 import {
   cloneSnapshot,
@@ -162,11 +163,17 @@ function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabF
       publish();
       return { ...workspace, tags: [...workspace.tags] };
     },
-    async deleteWorkspace(id) {
+    async deleteWorkspace(id, closeTabs = false) {
+      const deletedTabIds = new Set(snapshot.tabs.filter((tab) => isWorkspaceClosableTab(tab, id)).map((tab) => tab.id));
       snapshot = {
         ...snapshot,
         workspaces: snapshot.workspaces.filter((workspace) => workspace.id !== id),
-        tabs: snapshot.tabs.map((tab) => (tab.workspaceId === id ? { ...tab, workspaceId: null } : tab))
+        tabs: closeTabs
+          ? snapshot.tabs.flatMap((tab) => {
+              if (deletedTabIds.has(tab.id)) return [];
+              return tab.workspaceId === id ? [{ ...tab, workspaceId: null }] : [tab];
+            })
+          : snapshot.tabs.map((tab) => (tab.workspaceId === id ? { ...tab, workspaceId: null } : tab))
       };
       publish();
     },
@@ -361,10 +368,10 @@ export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdap
       if (result && typeof result === "object" && "id" in result) return result as Workspace;
       return callFallback((adapter) => adapter.updateWorkspace(id, draft));
     },
-    async deleteWorkspace(id) {
-      const result = await bridge("workspace.delete", { id });
+    async deleteWorkspace(id, closeTabs = false) {
+      const result = await bridge("workspace.delete", { id, closeTabs });
       if (result === undefined || (result && typeof result === "object" && !("id" in result))) {
-        await callFallback((adapter) => adapter.deleteWorkspace(id));
+        await callFallback((adapter) => adapter.deleteWorkspace(id, closeTabs));
       }
     },
     async moveTab(tabId, workspaceId) {

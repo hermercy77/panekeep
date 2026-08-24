@@ -17,7 +17,7 @@ export interface UseTabFridgeStateResult {
   clearError: () => void;
   createWorkspace: (draft: WorkspaceDraft) => Promise<Workspace | null>;
   updateWorkspace: (id: string, draft: Partial<WorkspaceDraft>) => Promise<Workspace | null>;
-  deleteWorkspace: (id: string) => Promise<boolean>;
+  deleteWorkspace: (id: string, closeTabs?: boolean) => Promise<boolean>;
   moveTab: (tabId: string, workspaceId: string | null) => Promise<boolean>;
   moveTabs: (tabIds: string[], workspaceId: string | null, targetWindowKey?: string) => Promise<MoveTabsResponse | null>;
   moveWorkspace: (workspaceId: string, beforeWorkspaceId?: string) => Promise<boolean>;
@@ -124,7 +124,7 @@ export function useTabFridgeState(adapter?: TabFridgeAdapter): UseTabFridgeState
   );
 
   const deleteWorkspace = useCallback(
-    (id: string) => run(() => stableAdapter.deleteWorkspace(id), () => undefined),
+    (id: string, closeTabs = false) => run(() => stableAdapter.deleteWorkspace(id, closeTabs), () => undefined),
     [run, stableAdapter]
   );
   const moveTab = useCallback(

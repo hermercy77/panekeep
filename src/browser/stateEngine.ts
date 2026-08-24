@@ -29,7 +29,7 @@ import { DexieStateRepository, type StateRepository } from "../storage/repositor
 import { loadAIConfig } from "../ai/config";
 import { organizeTabs } from "../ai/pipeline";
 import { fingerprintTabs } from "../ai/snapshot";
-import { organizationPreviewSchema, workspaceMergePreviewSchema } from "../shared/contracts";
+import { isWorkspaceClosableTab, organizationPreviewSchema, workspaceMergePreviewSchema } from "../shared/contracts";
 import { getAppLanguage, translate } from "../i18n";
 import { assignWorkspaceColors, inferWorkspaceIcon, normalizeWorkspaceIcon } from "../shared/workspaceAppearance";
 import { createWorkspaceMergePreview as buildWorkspaceMergePreview, fingerprintWorkspace } from "../shared/workspaceMerge";
@@ -281,19 +281,34 @@ export class BrowserStateEngine {
     return { ...workspace, tags: [...workspace.tags] };
   }
 
-  async deleteWorkspace(workspaceId: string): Promise<void> {
+  async deleteWorkspace(workspaceId: string, closeTabs = false): Promise<void> {
     const workspace = this.state.workspaces.find((item) => item.id === workspaceId);
     if (!workspace) return;
     const tabIds = this.state.tabs
-      .filter((tab) => tab.workspaceId === workspaceId && tab.kind === "normal")
+      .filter((tab) => isWorkspaceClosableTab(tab, workspaceId))
       .map((tab) => tab.id);
-    if (this.api && tabIds.length > 0) await this.ungroupNativeTabs(tabIds);
-    this.state.workspaces = this.state.workspaces.filter((item) => item.id !== workspaceId);
-    for (const tab of this.state.tabs) {
-      if (tab.workspaceId === workspaceId) tab.workspaceId = null;
+    if (this.api && tabIds.length > 0) {
+      if (closeTabs) {
+        const nativeIds = tabIds.map((id) => this.toNativeId(id)).filter((id): id is number => id !== undefined);
+        try {
+          if (nativeIds.length) await invokeBrowser(this.api.tabs, "remove", nativeIds);
+        } catch (error) {
+          await this.syncFromBrowser();
+          throw error;
+        }
+      } else await this.ungroupNativeTabs(tabIds);
     }
+    this.state.workspaces = this.state.workspaces.filter((item) => item.id !== workspaceId);
+    if (closeTabs) this.state.tabs = this.state.tabs.flatMap((tab) => {
+      if (tab.workspaceId !== workspaceId) return [tab];
+      return isWorkspaceClosableTab(tab, workspaceId) ? [] : [{ ...tab, workspaceId: null }];
+    });
+    else for (const tab of this.state.tabs) if (tab.workspaceId === workspaceId) tab.workspaceId = null;
     this.markChanged();
-    if (this.api) await this.syncFromBrowser();
+    if (this.api) {
+      if (closeTabs) await this.closeEmptyWindowsAfterMutation();
+      await this.syncFromBrowser();
+    }
   }
 
   async ungroupTabs(tabIds: string[]): Promise<BrowserStateResponse> {
@@ -661,7 +676,7 @@ export class BrowserStateEngine {
       case "tab-fridge/update-workspace":
         return this.updateWorkspace(request.workspaceId, request.patch);
       case "tab-fridge/delete-workspace":
-        return this.deleteWorkspace(request.workspaceId);
+        return this.deleteWorkspace(request.workspaceId, request.closeTabs === true);
       case "tab-fridge/merge-workspaces":
         return this.mergeWorkspaces(request.preview);
       case "tab-fridge/move-tabs":
@@ -703,7 +718,7 @@ export class BrowserStateEngine {
         result = await this.updateWorkspace(String(payload.id), payload.draft ?? {});
         break;
       case "workspace.delete":
-        result = await this.deleteWorkspace(String(payload.id));
+        result = await this.deleteWorkspace(String(payload.id), payload.closeTabs === true);
         break;
       case "workspace.move":
         result = await this.moveWorkspace(String(payload.workspaceId), payload.beforeWorkspaceId);

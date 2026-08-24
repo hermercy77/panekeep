@@ -21,6 +21,10 @@ export const tabRecordSchema = z.object({
 });
 export type TabRecord = z.infer<typeof tabRecordSchema>;
 
+export function isWorkspaceClosableTab(tab: TabRecord, workspaceId: string): boolean {
+  return tab.workspaceId === workspaceId && tab.kind !== "special";
+}
+
 export const workspaceIconSchema = z.enum(WORKSPACE_ICON_KEYS);
 export type WorkspaceIcon = z.infer<typeof workspaceIconSchema>;
 

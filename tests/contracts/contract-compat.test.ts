@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { organizationPreviewSchema, tabRecordSchema, workspaceMergePreviewSchema, workspaceSchema } from "../../src/shared/contracts";
+import { isWorkspaceClosableTab, organizationPreviewSchema, tabRecordSchema, workspaceMergePreviewSchema, workspaceSchema } from "../../src/shared/contracts";
 import { normalizeGroupColor } from "../../src/shared/constants";
 
 describe("shared contract compatibility", () => {
@@ -30,6 +30,14 @@ describe("shared contract compatibility", () => {
       index: 0,
       pinned: false
     }).id).toBe("tab-1");
+  });
+
+  it("uses one closeable-workspace-tab rule for UI counts and deletion", () => {
+    const base = { id: "tab-1", windowKey: "window-1", workspaceId: "workspace-1", url: "https://example.com", index: 0, pinned: false };
+    expect(isWorkspaceClosableTab({ ...base, kind: "normal" }, "workspace-1")).toBe(true);
+    expect(isWorkspaceClosableTab({ ...base, kind: "fixed" }, "workspace-1")).toBe(true);
+    expect(isWorkspaceClosableTab({ ...base, kind: "special" }, "workspace-1")).toBe(false);
+    expect(isWorkspaceClosableTab({ ...base, kind: "normal" }, "workspace-2")).toBe(false);
   });
 
   it("maps UI color aliases to browser-native tab-group colors", () => {

@@ -31,7 +31,7 @@ export interface TabFridgeAdapter {
   getSnapshot(): Promise<TabFridgeSnapshot>;
   createWorkspace(draft: WorkspaceDraft): Promise<Workspace>;
   updateWorkspace(id: string, draft: Partial<WorkspaceDraft>): Promise<Workspace>;
-  deleteWorkspace(id: string): Promise<void>;
+  deleteWorkspace(id: string, closeTabs?: boolean): Promise<void>;
   moveTab(tabId: string, workspaceId: string | null): Promise<void>;
   moveTabs(tabIds: string[], workspaceId: string | null, targetWindowKey?: string): Promise<MoveTabsResponse>;
   moveWorkspace(workspaceId: string, beforeWorkspaceId?: string): Promise<void>;

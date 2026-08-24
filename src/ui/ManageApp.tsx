@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, CircleAlert, CircleCheck, DatabaseBackup, Download, Plus, Rows3, Settings2, Upload, X } from "lucide-react";
-import type { AIConfig, Workspace } from "../shared/contracts";
+import { isWorkspaceClosableTab, type AIConfig, type Workspace } from "../shared/contracts";
 import { useTabFridgeState } from "../ui-state/useTabFridgeState";
 import { WorkspaceDialog } from "./WorkspaceDialog";
 import { createAIConfigStore, DEFAULT_AI_CONFIG, describeModelAvailability, type ModelAvailabilityNotice } from "../ai/config";
@@ -11,6 +11,7 @@ import { useI18n } from "../i18n/react";
 import { APP_LANGUAGES, type AppLanguage } from "../i18n/catalog";
 import type { BackupImportSkippedTab } from "../shared/backup";
 import { WorkspaceIcon } from "./WorkspaceIcon";
+import { DeleteWorkspaceDialog } from "./DeleteWorkspaceDialog";
 
 function sidepanelUrl(): string {
   try {
@@ -59,7 +60,7 @@ export function ManageApp() {
   }, []);
 
   const currentWindowKey = snapshot.windows.find((window) => window.isCurrent)?.key ?? snapshot.windows[0]?.key ?? "window:unknown";
-  const tabsForWorkspace = (workspaceId: string) => snapshot.tabs.filter((tab) => tab.workspaceId === workspaceId).length;
+  const tabsForWorkspace = (workspaceId: string) => snapshot.tabs.filter((tab) => isWorkspaceClosableTab(tab, workspaceId)).length;
 
   const openCreate = () => setDialog({ windowKey: currentWindowKey });
   const openEdit = (workspace: Workspace) => setDialog({ windowKey: workspace.windowKey, workspace });
@@ -71,11 +72,11 @@ export function ManageApp() {
       setDialog(null);
     }
   };
-  const remove = async () => {
+  const remove = async (closeTabs: boolean) => {
     if (!deleteTarget) return;
     const id = deleteTarget.id;
     setDeleteTarget(null);
-    await state.deleteWorkspace(id);
+    await state.deleteWorkspace(id, closeTabs);
   };
 
   const exportBackup = async () => {
@@ -273,7 +274,7 @@ export function ManageApp() {
       </div>
 
       <WorkspaceDialog open={Boolean(dialog)} windowKey={dialog?.windowKey ?? currentWindowKey} workspace={dialog?.workspace} busy={busy} onClose={() => setDialog(null)} onSubmit={submit} />
-      {deleteTarget ? <div className="dialog-backdrop" role="presentation"><section className="dialog-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="manage-delete-title"><div className="confirm-icon"><CircleAlert aria-hidden="true" size={18} /></div><h2 id="manage-delete-title">{t("side.deleteTitle", { name: deleteTarget.name })}</h2><p>{t("manage.deleteDescription")}</p><div className="dialog-actions"><button className="button button-ghost" type="button" onClick={() => setDeleteTarget(null)}>{t("common.cancel")}</button><button className="button button-danger" type="button" onClick={() => void remove()}>{t("side.deleteWorkspace")}</button></div></section></div> : null}
+      {deleteTarget ? <DeleteWorkspaceDialog workspace={deleteTarget} tabCount={tabsForWorkspace(deleteTarget.id)} onClose={() => setDeleteTarget(null)} onConfirm={remove} /> : null}
     </main>
   );
 }

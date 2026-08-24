@@ -357,6 +357,11 @@ svg { display: block; flex: 0 0 auto; }
 .merge-window-note { margin: var(--space-2xs) 0 0; color: var(--color-muted); font-size: var(--text-xs); }
 .dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-md); margin-block-end: var(--space-md); }
 .dialog-heading h2, .confirm-card h2 { min-width: 0; margin: 0; overflow-wrap: anywhere; font-family: var(--font-display); font-size: var(--text-lg); font-style: normal; font-weight: 680; letter-spacing: -.025em; }
+.delete-tabs-option { display: flex; align-items: flex-start; gap: var(--space-xs); margin-block-start: var(--space-md); padding: var(--space-sm); border: var(--rule-thin) solid var(--color-rule-strong); border-radius: var(--radius-sm); color: var(--color-ink-2); background: var(--color-paper-2); text-align: start; cursor: pointer; }
+.delete-tabs-option input { margin-block-start: .15rem; accent-color: var(--color-danger); }
+.delete-tabs-option span { min-width: 0; display: grid; gap: var(--space-3xs); }
+.delete-tabs-option strong { font-size: var(--text-xs); font-weight: 620; }
+.delete-tabs-option small { color: var(--color-muted); font-size: var(--text-2xs); line-height: 1.4; }
 .dialog-kicker, .dialog-intro { margin: var(--space-2xs) 0 0; color: var(--color-muted); font-size: var(--text-xs); }
 .dialog-intro { margin-block-end: var(--space-md); }
 .field-label { display: block; margin-block: var(--space-sm) var(--space-2xs); color: var(--color-ink-2); font-size: var(--text-xs); font-weight: 620; }

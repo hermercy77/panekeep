@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { CircleAlert, RefreshCw, Rows3, ScanLine, Search, Settings2, X } from "lucide-react";
-import type { OrganizationMode, OrganizationPreview, Workspace, WorkspaceMergePreview } from "../shared/contracts";
+import { isWorkspaceClosableTab, type OrganizationMode, type OrganizationPreview, type Workspace, type WorkspaceMergePreview } from "../shared/contracts";
 import { useTabFridgeState } from "../ui-state/useTabFridgeState";
 import { OrganizationDialog } from "./OrganizationDialog";
 import { TabTree, type TabFilter, type WindowScope } from "./TabTree";
 import { WorkspaceDialog } from "./WorkspaceDialog";
 import { useI18n } from "../i18n/react";
 import { WorkspaceMergeDialog } from "./WorkspaceMergeDialog";
+import { DeleteWorkspaceDialog } from "./DeleteWorkspaceDialog";
 
 function manageUrl(): string {
   try {
@@ -84,11 +85,11 @@ export function SidePanelApp() {
     }
   };
 
-  const confirmDelete = async () => {
+  const confirmDelete = async (closeTabs: boolean) => {
     if (!deleteTarget) return;
     const target = deleteTarget;
     setDeleteTarget(null);
-    await state.deleteWorkspace(target.id);
+    await state.deleteWorkspace(target.id, closeTabs);
   };
 
   const moveCheckedTabs = async (tabIds: string[], workspaceId: string | null, targetWindowKey?: string) => {
@@ -271,21 +272,12 @@ export function SidePanelApp() {
         onSubmit={submitWorkspace}
       />
       {deleteTarget ? (
-        <div className="dialog-backdrop" role="presentation">
-          <section className="dialog-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="delete-title">
-            <div className="confirm-icon"><CircleAlert aria-hidden="true" size={18} /></div>
-            <h2 id="delete-title">{t("side.deleteTitle", { name: deleteTarget.name })}</h2>
-            <p>{t("side.deleteDescription")}</p>
-            <div className="dialog-actions">
-              <button className="button button-ghost" type="button" onClick={() => setDeleteTarget(null)}>
-                {t("common.cancel")}
-              </button>
-              <button className="button button-danger" type="button" onClick={() => void confirmDelete()}>
-                {t("side.deleteWorkspace")}
-              </button>
-            </div>
-          </section>
-        </div>
+        <DeleteWorkspaceDialog
+          workspace={deleteTarget}
+          tabCount={snapshot.tabs.filter((tab) => isWorkspaceClosableTab(tab, deleteTarget.id)).length}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={confirmDelete}
+        />
       ) : null}
       <WorkspaceMergeDialog
         preview={mergePreview}

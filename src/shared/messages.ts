@@ -39,7 +39,7 @@ export type BackgroundRequest =
       workspaceId: string;
       patch: Partial<Pick<Workspace, "name" | "description" | "tags" | "color" | "icon" | "order">>;
     }
-  | { type: typeof MESSAGE_TYPES.deleteWorkspace; workspaceId: string }
+  | { type: typeof MESSAGE_TYPES.deleteWorkspace; workspaceId: string; closeTabs?: boolean }
   | { type: typeof MESSAGE_TYPES.mergeWorkspaces; preview: WorkspaceMergePreview }
   | {
       type: typeof MESSAGE_TYPES.moveTabs;
