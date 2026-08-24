@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AIConflictError,
   AIValidationError,
@@ -6,9 +6,12 @@ import {
   fingerprintTabs,
   organizeTabs
 } from "../../src/ai";
+import { organizationOutputTokenBudget } from "../../src/ai/pipeline";
 import { tabsFixture } from "./fixtures/organization-response";
 
 describe("organization pipeline", () => {
+  afterEach(() => vi.useRealTimers());
+
   it("supports purpose/type modes and batches all tabs", async () => {
     const client = new MockAIClient();
     const preview = await organizeTabs({ tabs: tabsFixture, mode: "type", client, batchSize: 2 });
@@ -135,6 +138,76 @@ describe("organization pipeline", () => {
     expect(performance.now() - startedAt).toBeLessThan(1_000);
     expect(preview.sourceTabIds).toHaveLength(50);
     expect(client.requests).toHaveLength(3);
+  });
+
+  it("runs provider batches concurrently with a bounded worker pool", async () => {
+    vi.useFakeTimers();
+    const tabs = Array.from({ length: 8 }, (_, index) => ({
+      id: `parallel-${index + 1}`,
+      windowKey: "window-1",
+      workspaceId: null,
+      kind: "normal" as const,
+      url: `https://example.com/${index + 1}`,
+      title: `Tab ${index + 1}`,
+      index,
+      pinned: false
+    }));
+    const client = new MockAIClient({ latencyMs: 50 });
+
+    const pending = organizeTabs({ tabs, mode: "purpose", client, batchSize: 1, requestConcurrency: 3 });
+    await Promise.resolve();
+
+    expect(client.requests).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(client.requests).toHaveLength(6);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(client.requests).toHaveLength(8);
+    await vi.advanceTimersByTimeAsync(50);
+    await expect(pending).resolves.toMatchObject({ sourceTabIds: tabs.map((tab) => tab.id) });
+  });
+
+  it("stops scheduling new batches after the first provider failure", async () => {
+    const tabs = Array.from({ length: 8 }, (_, index) => ({
+      id: `failure-${index + 1}`,
+      windowKey: "window-1",
+      workspaceId: null,
+      kind: "normal" as const,
+      url: `https://example.com/failure/${index + 1}`,
+      title: `Failure ${index + 1}`,
+      index,
+      pinned: false
+    }));
+    const client = new MockAIClient({
+      handler: async (_messages, callIndex) => {
+        if (callIndex === 0) throw new Error("provider failed");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { groups: [], unclassifiedTabIds: [] };
+      }
+    });
+
+    await expect(organizeTabs({ tabs, mode: "purpose", client, batchSize: 1, requestConcurrency: 3 }))
+      .rejects.toThrow("provider failed");
+    expect(client.requests.length).toBeLessThanOrEqual(3);
+  });
+
+  it("scales the JSON output budget with the selected tab count", () => {
+    expect(organizationOutputTokenBudget(3)).toBe(512);
+    expect(organizationOutputTokenBudget(20)).toBe(856);
+    expect(organizationOutputTokenBudget(50)).toBe(1_756);
+    expect(organizationOutputTokenBudget(500)).toBe(2_048);
+  });
+
+  it("falls back to safe request concurrency for non-finite input", async () => {
+    const client = new MockAIClient();
+
+    await expect(organizeTabs({
+      tabs: tabsFixture,
+      mode: "purpose",
+      client,
+      batchSize: 1,
+      requestConcurrency: Number.NaN
+    })).resolves.toMatchObject({ sourceTabIds: tabsFixture.map((tab) => tab.id) });
+    expect(client.requests).toHaveLength(tabsFixture.length);
   });
 
   it("propagates the selected language into every AI batch", async () => {

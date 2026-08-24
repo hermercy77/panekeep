@@ -53,9 +53,10 @@ function parseTabs(messages: readonly ChatMessage[]): Array<{ id: string }> {
   return parsed.filter((tab): tab is { id: string } => typeof tab.id === "string");
 }
 
-function oracleClient(): AIClient {
+function oracleClient(latencyMs = 0): AIClient {
   const labels = new Map(ORGANIZATION_EVAL_TABS.map((item) => [item.tab.id, item]));
   return new MockAIClient({
+    latencyMs,
     handler(messages) {
       const mode: OrganizationMode = messages.some((message) => message.content.includes("Organization mode: type")) ? "type" : "purpose";
       const expectedWorkspace = mode === "purpose" ? PURPOSE_EXPECTED_WORKSPACE : TYPE_EXPECTED_WORKSPACE;
@@ -98,6 +99,9 @@ async function main(): Promise<void> {
   const repetitions = Math.max(1, Math.floor(numberOption("--runs", live ? 3 : 1)));
   const latencyBudgetMs = Math.max(1, numberOption("--max-ms", 10_000));
   const requestTimeoutMs = Math.max(latencyBudgetMs, numberOption("--request-timeout-ms", 12_000));
+  const simulatedLatencyMs = Math.max(0, numberOption("--simulated-latency-ms", 0));
+  const batchSize = Math.max(1, Math.floor(numberOption("--batch-size", 50)));
+  const requestConcurrency = Math.max(1, Math.floor(numberOption("--request-concurrency", 3)));
   const baseUrl = option("--base-url") ?? process.env.TAB_FRIDGE_AI_BASE_URL ?? "https://api.deepseek.com/v1";
   const model = option("--model") ?? process.env.TAB_FRIDGE_AI_MODEL ?? "deepseek-v4-flash";
   const apiKey = process.env.TAB_FRIDGE_AI_API_KEY ?? "";
@@ -108,7 +112,7 @@ async function main(): Promise<void> {
 
   const client = live
     ? createOpenAICompatibleClient({ baseUrl, apiKey, model }, { retry: { maxRetries: 0, timeoutMs: requestTimeoutMs } })
-    : oracleClient();
+    : oracleClient(simulatedLatencyMs);
   const results: RunResult[] = [];
   for (const mode of modes) {
     const existingWorkspaces = mode === "purpose" ? PURPOSE_EVAL_WORKSPACES : TYPE_EVAL_WORKSPACES;
@@ -123,7 +127,8 @@ async function main(): Promise<void> {
             mode,
             client,
             existingWorkspaces,
-            batchSize: 50,
+            batchSize,
+            requestConcurrency,
             language: "en"
           });
           const latencyMs = performance.now() - startedAt;
@@ -157,12 +162,13 @@ async function main(): Promise<void> {
   const successfulLatencies = results.filter((result) => !result.error).map((result) => result.latencyMs);
   const latency = summarizeLatency(successfulLatencies);
   const qualityPassed = results.every((result) => result.qualityPassed && !result.error);
-  const latencyPassed = !live || (results.every((result) => !result.error && result.latencyMs <= latencyBudgetMs) && latency.p95Ms <= latencyBudgetMs);
+  const latencyMeasured = live || simulatedLatencyMs > 0;
+  const latencyPassed = !latencyMeasured || (results.every((result) => !result.error && result.latencyMs <= latencyBudgetMs) && latency.p95Ms <= latencyBudgetMs);
   const report = {
     generatedAt: new Date().toISOString(),
     live,
     provider: live ? { baseUrl, model } : { kind: "deterministic-oracle" },
-    configuration: { sizes, modes, repetitions, latencyBudgetMs, requestTimeoutMs, purposeF1: threshold("purpose"), typeF1: threshold("type") },
+    configuration: { sizes, modes, repetitions, latencyBudgetMs, requestTimeoutMs, simulatedLatencyMs, batchSize, requestConcurrency, purposeF1: threshold("purpose"), typeF1: threshold("type") },
     summary: { passed: qualityPassed && latencyPassed, qualityPassed, latencyPassed, latency },
     results
   };

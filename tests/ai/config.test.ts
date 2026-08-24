@@ -12,6 +12,7 @@ describe("local AI config storage", () => {
     const store = new LocalAIConfigStore(storage);
     await store.save({ baseUrl: "https://provider.test/v1/", apiKey: " secret ", model: " model " });
     expect(values[AI_CONFIG_STORAGE_KEY]).toEqual({
+      providerId: "custom",
       baseUrl: "https://provider.test/v1",
       apiKey: "secret",
       model: "model"
@@ -19,6 +20,18 @@ describe("local AI config storage", () => {
     await expect(store.load()).resolves.toMatchObject({ apiKey: "secret" });
     await store.clear();
     await expect(store.load()).resolves.toMatchObject({ apiKey: "" });
+  });
+
+  it("infers a preset for configurations saved before provider selection existed", async () => {
+    const values: Record<string, unknown> = {
+      [AI_CONFIG_STORAGE_KEY]: { baseUrl: "https://openrouter.ai/api/v1", apiKey: "secret", model: "model" }
+    };
+    const store = new LocalAIConfigStore({
+      get: async () => values,
+      set: async (items: Record<string, unknown>) => Object.assign(values, items)
+    });
+
+    await expect(store.load()).resolves.toMatchObject({ providerId: "openrouter" });
   });
 
   it("supports callback-style Chrome storage implementations", async () => {

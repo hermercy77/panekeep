@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, CircleAlert, CircleCheck, DatabaseBackup, Download, Plus, Rows3, Settings2, Upload, X } from "lucide-react";
-import type { Workspace } from "../shared/contracts";
+import type { AIConfig, Workspace } from "../shared/contracts";
 import { useTabFridgeState } from "../ui-state/useTabFridgeState";
 import { WorkspaceDialog } from "./WorkspaceDialog";
-import { createAIConfigStore, describeModelAvailability, type ModelAvailabilityNotice } from "../ai/config";
+import { createAIConfigStore, DEFAULT_AI_CONFIG, describeModelAvailability, type ModelAvailabilityNotice } from "../ai/config";
 import { createOpenAICompatibleClient } from "../ai/client";
+import { AI_PROVIDER_PRESETS, getAIProviderPreset, inferAIProviderId } from "../ai/providers";
 import { workspaceColorClass } from "./workspaceColors";
 import { useI18n } from "../i18n/react";
 import { APP_LANGUAGES, type AppLanguage } from "../i18n/catalog";
@@ -28,7 +29,9 @@ export function ManageApp() {
   const [busy, setBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Workspace | null>(null);
   const [notice, setNotice] = useState<ModelAvailabilityNotice | null>(null);
-  const [aiConfig, setAiConfig] = useState({ baseUrl: "https://api.openai.com/v1", apiKey: "", model: "" });
+  const [aiConfig, setAiConfig] = useState<AIConfig>(DEFAULT_AI_CONFIG);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [modelEntryMode, setModelEntryMode] = useState<"list" | "manual">("manual");
   const [testingAI, setTestingAI] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [skippedImportTabs, setSkippedImportTabs] = useState<BackupImportSkippedTab[]>([]);
@@ -98,13 +101,41 @@ export function ManageApp() {
     }
   };
 
+  const changeProvider = (providerId: string) => {
+    const preset = getAIProviderPreset(providerId);
+    setAiConfig({
+      providerId,
+      baseUrl: preset?.baseUrl ?? "",
+      apiKey: "",
+      model: ""
+    });
+    setAvailableModels([]);
+    setModelEntryMode("manual");
+    setNotice(null);
+  };
+
+  const changeBaseUrl = (baseUrl: string) => {
+    setAiConfig({ ...aiConfig, baseUrl, providerId: inferAIProviderId(baseUrl) });
+    setAvailableModels([]);
+    setModelEntryMode("manual");
+  };
+
   const testAI = async () => {
     setTestingAI(true);
     setNotice(null);
     try {
       const config = await aiStore.save(aiConfig);
       const result = await createOpenAICompatibleClient(config).testConnection();
-      setNotice(describeModelAvailability(config.model, result.models, language));
+      setAiConfig(config);
+      setAvailableModels(result.models);
+      if (result.models.length) {
+        setModelEntryMode(config.model && !result.models.includes(config.model) ? "manual" : "list");
+      } else {
+        setModelEntryMode("manual");
+      }
+      setNotice(result.models.length
+        ? describeModelAvailability(config.model, result.models, language)
+        : { tone: "success", message: t("manage.noModelsLoaded") });
     } catch (error) {
       setNotice({ tone: "error", message: error instanceof Error ? error.message : t("notice.connectionFailed") });
     } finally {
@@ -196,13 +227,31 @@ export function ManageApp() {
           <section className="manage-section split-section" id="ai-settings">
             <div className="section-title-row"><div><h2>{t("manage.aiSettings")}</h2><p>{t("manage.aiDescription")}</p></div></div>
             <div className="settings-card">
-              <label className="field-label" htmlFor="ai-base-url">Base URL</label>
-              <input id="ai-base-url" className="text-input" value={aiConfig.baseUrl} onChange={(event) => setAiConfig({ ...aiConfig, baseUrl: event.target.value })} />
+              <label className="field-label" htmlFor="ai-provider">{t("manage.provider")}</label>
+              <select id="ai-provider" className="text-input provider-select" disabled={testingAI} value={getAIProviderPreset(aiConfig.providerId) ? aiConfig.providerId : "custom"} onChange={(event) => changeProvider(event.target.value)}>
+                <optgroup label={t("manage.providerGlobal")}>
+                  {AI_PROVIDER_PRESETS.filter((provider) => provider.market === "global").map((provider) => <option key={provider.id} value={provider.id}>{t(provider.nameKey)}</option>)}
+                </optgroup>
+                <optgroup label={t("manage.providerChina")}>
+                  {AI_PROVIDER_PRESETS.filter((provider) => provider.market === "china").map((provider) => <option key={provider.id} value={provider.id}>{t(provider.nameKey)}</option>)}
+                </optgroup>
+                <option value="custom">{t("manage.providerCustom")}</option>
+              </select>
+              <label className="field-label" htmlFor="ai-base-url">{t("manage.baseUrl")}</label>
+              <input id="ai-base-url" className="text-input" disabled={testingAI} value={aiConfig.baseUrl} onChange={(event) => changeBaseUrl(event.target.value)} />
               <div className="form-columns">
-                <div><label className="field-label" htmlFor="ai-model">{t("manage.model")}</label><input id="ai-model" className="text-input" value={aiConfig.model} onChange={(event) => setAiConfig({ ...aiConfig, model: event.target.value })} placeholder={t("manage.modelPlaceholder")} /></div>
-                <div><label className="field-label" htmlFor="ai-key">API Key</label><input id="ai-key" className="text-input" type="password" value={aiConfig.apiKey} onChange={(event) => setAiConfig({ ...aiConfig, apiKey: event.target.value })} placeholder={t("manage.keyPlaceholder")} /></div>
+                <div>
+                  <div className="field-label-row"><label className="field-label" htmlFor="ai-model">{t("manage.model")}</label>{availableModels.length ? <button className="field-mode-button" type="button" disabled={testingAI} onClick={() => setModelEntryMode(modelEntryMode === "list" ? "manual" : "list")}>{modelEntryMode === "list" ? t("manage.manualModel") : t("manage.useDetectedModels")}</button> : null}</div>
+                  {modelEntryMode === "list" && availableModels.length ? (
+                    <select id="ai-model" className="text-input" disabled={testingAI} value={aiConfig.model} onChange={(event) => setAiConfig({ ...aiConfig, model: event.target.value })}>
+                      <option value="">{t("manage.selectModel")}</option>
+                      {availableModels.map((model) => <option key={model} value={model}>{model}</option>)}
+                    </select>
+                  ) : <input id="ai-model" className="text-input" disabled={testingAI} value={aiConfig.model} onChange={(event) => setAiConfig({ ...aiConfig, model: event.target.value })} placeholder={t("manage.modelPlaceholder")} />}
+                </div>
+                <div><label className="field-label" htmlFor="ai-key">{t("manage.apiKey")}</label><input id="ai-key" className="text-input" disabled={testingAI} type="password" value={aiConfig.apiKey} onChange={(event) => setAiConfig({ ...aiConfig, apiKey: event.target.value })} placeholder={t("manage.keyPlaceholder")} /></div>
               </div>
-              <div className="settings-actions"><div className="button-row"><button className="button button-ghost" type="button" onClick={() => void testAI()} disabled={testingAI}>{testingAI ? t("manage.testing") : t("manage.testConnection")}</button><button className="button button-primary" type="button" onClick={() => void saveAI()}>{t("manage.saveSettings")}</button></div></div>
+              <div className="settings-actions"><span>{availableModels.length ? t("manage.modelsLoaded", { count: availableModels.length }) : t("manage.testToLoadModels")}</span><div className="button-row"><button className="button button-ghost" type="button" onClick={() => void testAI()} disabled={testingAI}>{testingAI ? t("manage.testing") : t("manage.testConnection")}</button><button className="button button-primary" type="button" disabled={testingAI} onClick={() => void saveAI()}>{t("manage.saveSettings")}</button></div></div>
             </div>
           </section>
 

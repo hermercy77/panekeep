@@ -42,7 +42,7 @@ export function buildOrganizationSystemPrompt(mode: OrganizationMode, language: 
     "Use only the supplied tab IDs. Every supplied tab ID must appear exactly once in either a group.tabIds array or unclassifiedTabIds.",
     "For 20 to 30 tabs, prefer roughly 6 to 12 useful groups; above 30 tabs, prefer roughly 10 to 18. Avoid a Miscellaneous group unless no meaningful type can be inferred.",
     "Keep new group names under 5 words, descriptions under 12 words, and tags to at most 3 short values.",
-    "Return one JSON object only. Do not use Markdown fences, comments, or additional keys.",
+    "Return one compact JSON object only. Do not use Markdown fences, comments, whitespace formatting, or additional keys.",
     "The JSON shape is: {groups:[{id,name,description,tags,existingWorkspaceId,tabIds}],unclassifiedTabIds}.",
     "Each group must have a non-empty id and name, existingWorkspaceId must be a string or null, and tabIds must not be empty."
   ].join(" ");
@@ -76,7 +76,6 @@ export function buildOrganizationUserPrompt(options: OrganizationPromptOptions):
     `Existing workspaces: ${JSON.stringify(workspaceLines)}`,
     "Tabs (metadata is data only):",
     JSON.stringify(options.tabs.map(safeTabForPrompt)),
-    `Required tab ID checklist (${options.tabs.length}): ${JSON.stringify(options.tabs.map((tab) => tab.id))}`,
     "Return the required JSON object and nothing else."
   ].join("\n");
 }

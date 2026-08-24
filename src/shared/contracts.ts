@@ -55,6 +55,7 @@ export const specialTabSchema = tabRecordSchema.extend({
 export type SpecialTab = z.infer<typeof specialTabSchema>;
 
 export const aiConfigSchema = z.object({
+  providerId: z.string().min(1).default("openai"),
   baseUrl: z.string().url().default("https://api.openai.com/v1"),
   apiKey: z.string().default(""),
   model: z.string().default("")

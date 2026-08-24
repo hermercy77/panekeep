@@ -1,8 +1,10 @@
 import { aiConfigSchema, type AIConfig } from "../shared/contracts";
 import { AIConfigError } from "./errors";
 import { getAppLanguage, translate, type AppLanguage } from "../i18n";
+import { inferAIProviderId } from "./providers";
 
 export const DEFAULT_AI_CONFIG: AIConfig = {
+  providerId: "openai",
   baseUrl: "https://api.openai.com/v1",
   apiKey: "",
   model: ""
@@ -23,6 +25,7 @@ export function describeModelAvailability(
 ): ModelAvailabilityNotice {
   const available = [...new Set(models.filter(Boolean))];
   if (!available.length) return { tone: "success", message: translate(language, "ai.connectionNoModels") };
+  if (!model) return { tone: "success", message: translate(language, "manage.modelsLoaded", { count: available.length }) };
   if (available.includes(model)) return { tone: "success", message: translate(language, "ai.connectionModels", { count: available.length }) };
   return {
     tone: "error",
@@ -65,12 +68,14 @@ export function normalizeAIConfig(config: Partial<AIConfig> = {}): AIConfig {
   try {
     const parsed = aiConfigSchema.parse({
       ...candidate,
+      providerId: String(config.providerId ?? inferAIProviderId(String(candidate.baseUrl))).trim(),
       baseUrl: stripTrailingSlashes(String(candidate.baseUrl).trim()),
       apiKey: String(candidate.apiKey ?? "").trim(),
       model: String(candidate.model ?? "").trim()
     });
 
     return {
+      providerId: parsed.providerId,
       baseUrl: stripTrailingSlashes(parsed.baseUrl),
       apiKey: parsed.apiKey,
       model: parsed.model

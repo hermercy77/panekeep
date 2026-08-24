@@ -20,6 +20,18 @@ This deterministic run validates the evaluator, scoring, batching, and report fo
 npm run eval:ai
 ```
 
+To verify wall-clock batching without an API key, simulate a 250 ms provider and split 50 tabs into five requests. With the default concurrency of three, the total should stay near two simulated request waves instead of five sequential requests:
+
+```bash
+npm run eval:ai -- \
+  --sizes 50 \
+  --modes purpose,type \
+  --runs 3 \
+  --simulated-latency-ms 250 \
+  --batch-size 10 \
+  --max-ms 1000
+```
+
 ## Live DeepSeek evaluation
 
 Provide the key through an environment variable. It is sent only to the configured provider and is never written to the report.
@@ -49,6 +61,9 @@ Useful options:
 - `--purpose-f1 0.78`
 - `--type-f1 0.72`
 - `--request-timeout-ms 12000`
+- `--batch-size 50`
+- `--request-concurrency 3`
+- `--simulated-latency-ms 250` (offline mode only)
 - `--output <path>`
 
 Exit status is non-zero when classification quality, schema validity, workspace reuse, or latency misses its threshold, so the suite can run in CI.
@@ -59,4 +74,4 @@ On 2026-08-24, `deepseek-v4-flash` passed all 18 live cases (20, 35, and 50 tabs
 
 ## 中文说明
 
-该评测不控制浏览器、不打开真实网页，只使用仓库中的合成标题与 URL。质量采用标签两两是否应该同组的 F1 分数，不要求 AI 输出固定分类名称；实时模式默认要求每次请求及 p95 都不超过 10 秒。API Key 只从环境变量读取，不会进入数据集、日志或报告。2026-08-24 的 DeepSeek 实测中，18 个用例全部通过，p50 为 3.188 秒、p95/最大值为 5.319 秒。
+该评测不控制浏览器、不打开真实网页，只使用仓库中的合成标题与 URL。质量采用标签两两是否应该同组的 F1 分数，不要求 AI 输出固定分类名称；实时模式默认要求每次请求及 p95 都不超过 10 秒。没有 API Key 时，可使用 `--simulated-latency-ms` 配合 `--batch-size` 验证批次是否并行。API Key 只从环境变量读取，不会进入数据集、日志或报告。2026-08-24 的 DeepSeek 实测中，18 个用例全部通过，p50 为 3.188 秒、p95/最大值为 5.319 秒。

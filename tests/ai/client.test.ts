@@ -28,6 +28,164 @@ describe("OpenAI-compatible client", () => {
     expect(calls[0].init?.headers?.Authorization).toBe("Bearer sk-test-secret");
   });
 
+  it("uses Anthropic's native authentication for its model list", async () => {
+    const calls: { url: string; init?: { headers?: Record<string, string> } }[] = [];
+    const client = new OpenAICompatibleClient({
+      providerId: "anthropic",
+      baseUrl: "https://api.anthropic.com/v1",
+      apiKey: "anthropic-test",
+      model: ""
+    }, {
+      fetch: async (url, init) => {
+        calls.push({ url, init });
+        return response(200, { data: [{ id: "claude-test" }] });
+      }
+    });
+
+    await client.testConnection();
+
+    expect(calls[0].url).toBe("https://api.anthropic.com/v1/models");
+    expect(calls[0].init?.headers).toMatchObject({
+      "x-api-key": "anthropic-test",
+      "anthropic-version": "2023-06-01"
+    });
+    expect(calls[0].init?.headers).not.toHaveProperty("Authorization");
+  });
+
+  it("uses Anthropic's native Messages request", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    let requestUrl = "";
+    const client = new OpenAICompatibleClient({
+      providerId: "anthropic",
+      baseUrl: "https://api.anthropic.com/v1",
+      apiKey: "anthropic-test",
+      model: "claude-sonnet-test"
+    }, {
+      fetch: async (url, init) => {
+        requestUrl = url;
+        requestBody = JSON.parse(init?.body ?? "{}") as Record<string, unknown>;
+        return response(200, { content: [{ type: "text", text: '{"ok":true}' }] });
+      }
+    });
+
+    await client.completeJSON([
+      { role: "system", content: "Return JSON" },
+      { role: "user", content: "classify" }
+    ]);
+
+    expect(requestUrl).toBe("https://api.anthropic.com/v1/messages");
+    expect(requestBody).toHaveProperty("system", "Return JSON");
+    expect(requestBody).toHaveProperty("messages", [{ role: "user", content: "classify" }]);
+    expect(requestBody).not.toHaveProperty("temperature");
+    expect(requestBody).not.toHaveProperty("response_format");
+    expect(requestBody).not.toHaveProperty("thinking");
+  });
+
+  it("falls back when a provider cannot disable thinking", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const client = new OpenAICompatibleClient({
+      providerId: "volcengine-ark",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+      apiKey: "test",
+      model: "doubao-test"
+    }, {
+      fetch: async (_url, init) => {
+        const requestBody = JSON.parse(init?.body ?? "{}") as Record<string, unknown>;
+        requestBodies.push(requestBody);
+        return requestBodies.length === 1
+          ? response(400, { error: { message: "thinking.type.disabled is not supported for this model" } })
+          : response(200, { choices: [{ message: { content: '{"ok":true}' } }] });
+      }
+    });
+
+    await expect(client.completeJSON([{ role: "user", content: "classify" }])).resolves.toEqual({ ok: true });
+    expect(requestBodies[0]).toHaveProperty("thinking", { type: "disabled" });
+    expect(requestBodies[1]).not.toHaveProperty("thinking");
+  });
+
+  it("uses a valid near-deterministic temperature for Zhipu", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const client = new OpenAICompatibleClient({
+      providerId: "zhipu",
+      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+      apiKey: "zhipu-test",
+      model: "glm-test"
+    }, {
+      fetch: async (_url, init) => {
+        requestBody = JSON.parse(init?.body ?? "{}") as Record<string, unknown>;
+        return response(200, { choices: [{ message: { content: '{"ok":true}' } }] });
+      }
+    });
+
+    await client.completeJSON([{ role: "user", content: "classify" }]);
+
+    expect(requestBody).toHaveProperty("temperature", 0.01);
+  });
+
+  it("disables provider-specific thinking for common low-latency presets", async () => {
+    const bodies = new Map<string, Record<string, unknown>>();
+    for (const provider of [
+      { providerId: "volcengine-ark", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", model: "doubao-test" },
+      { providerId: "alibaba-model-studio", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-test" },
+      { providerId: "siliconflow", baseUrl: "https://api.siliconflow.cn/v1", model: "Qwen/test" }
+    ]) {
+      const client = new OpenAICompatibleClient({ ...provider, apiKey: "test" }, {
+        fetch: async (_url, init) => {
+          bodies.set(provider.providerId, JSON.parse(init?.body ?? "{}") as Record<string, unknown>);
+          return response(200, { choices: [{ message: { content: '{"ok":true}' } }] });
+        }
+      });
+      await client.completeJSON([{ role: "user", content: "classify" }]);
+    }
+
+    expect(bodies.get("volcengine-ark")).toHaveProperty("thinking", { type: "disabled" });
+    expect(bodies.get("alibaba-model-studio")).toHaveProperty("enable_thinking", false);
+    expect(bodies.get("siliconflow")).toHaveProperty("enable_thinking", false);
+  });
+
+  it("falls back when a provider rejects enable_thinking", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const client = new OpenAICompatibleClient({
+      providerId: "siliconflow",
+      baseUrl: "https://api.siliconflow.cn/v1",
+      apiKey: "test",
+      model: "model-without-toggle"
+    }, {
+      fetch: async (_url, init) => {
+        const requestBody = JSON.parse(init?.body ?? "{}") as Record<string, unknown>;
+        requestBodies.push(requestBody);
+        return requestBodies.length === 1
+          ? response(400, { error: { message: "enable_thinking is unsupported" } })
+          : response(200, { choices: [{ message: { content: '{"ok":true}' } }] });
+      }
+    });
+
+    await expect(client.completeJSON([{ role: "user", content: "classify" }])).resolves.toEqual({ ok: true });
+    expect(requestBodies[0]).toHaveProperty("enable_thinking", false);
+    expect(requestBodies[1]).not.toHaveProperty("enable_thinking");
+  });
+
+  it("tests a connection before a model is selected and accepts common model-list shapes", async () => {
+    const client = new OpenAICompatibleClient({ ...config, model: "" }, {
+      fetch: async () => response(200, [
+        { id: "chat-b", type: "chat" },
+        { name: "chat-a", type: "language" },
+        { id: "code-model", type: "code" },
+        { id: "embed", type: "embedding" }
+      ])
+    });
+
+    await expect(client.testConnection()).resolves.toEqual({ ok: true, status: 200, models: ["chat-a", "chat-b", "code-model"] });
+  });
+
+  it("rejects a successful HTML or unrelated JSON response as a false-positive connection", async () => {
+    const client = new OpenAICompatibleClient({ ...config, model: "" }, {
+      fetch: async () => response(200, { page: "dashboard" })
+    });
+
+    await expect(client.testConnection()).rejects.toBeInstanceOf(AIHttpError);
+  });
+
   it("retries a transient 429 once", async () => {
     let attempts = 0;
     const client = new OpenAICompatibleClient(config, {

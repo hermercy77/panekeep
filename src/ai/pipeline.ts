@@ -27,6 +27,8 @@ export interface OrganizationPipelineRequest {
   existingWorkspaces?: readonly Pick<Workspace, "id" | "name" | "description" | "tags">[];
   /** Number of tabs per provider call. Defaults to 50. */
   batchSize?: number;
+  /** Maximum simultaneous provider calls. Defaults to three. */
+  requestConcurrency?: number;
   snapshot?: TabSnapshot;
   revision?: string | number;
   getCurrentSnapshot?: () => TabSnapshot | Promise<TabSnapshot>;
@@ -41,6 +43,40 @@ export interface BatchOrganizationResult {
 }
 
 const DEFAULT_BATCH_SIZE = 50;
+const DEFAULT_REQUEST_CONCURRENCY = 3;
+
+/** Keep JSON generation bounded without starving a 50-tab result. */
+export function organizationOutputTokenBudget(tabCount: number): number {
+  return Math.min(2_048, Math.max(512, 256 + Math.max(0, Math.floor(tabCount)) * 30));
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  operation: (value: T, index: number) => Promise<R>,
+  onFirstError?: () => void
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  let stopped = false;
+  const workers = Array.from({ length: Math.min(values.length, concurrency) }, async () => {
+    while (!stopped && nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      try {
+        results[index] = await operation(values[index], index);
+      } catch (error) {
+        if (!stopped) {
+          stopped = true;
+          onFirstError?.();
+        }
+        throw error;
+      }
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
 
 function tr(key: Parameters<typeof translate>[1], variables?: Record<string, string | number | undefined>): string {
   return translate(getAppLanguage(), key, variables);
@@ -137,7 +173,10 @@ async function requestBatch(
   let previousRaw: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const raw = await client.completeJSON(messages, organizationResponseSchema, { signal, maxTokens: 2_048 });
+      const raw = await client.completeJSON(messages, organizationResponseSchema, {
+        signal,
+        maxTokens: organizationOutputTokenBudget(tabs.length)
+      });
       previousRaw = raw;
       return parseAndValidateOrganizationResponse(raw, tabIds);
     } catch (error) {
@@ -157,18 +196,30 @@ export async function organizeTabs(request: OrganizationPipelineRequest): Promis
   if (!modeResult.success) throw new AIValidationError(tr("ai.unsupportedMode"), modeResult.error.issues);
   ensureTabInput(request.tabs);
   const batchSize = request.batchSize ?? DEFAULT_BATCH_SIZE;
+  const requestedConcurrency = request.requestConcurrency ?? DEFAULT_REQUEST_CONCURRENCY;
+  const requestConcurrency = Number.isFinite(requestedConcurrency) && requestedConcurrency > 0
+    ? Math.max(1, Math.floor(requestedConcurrency))
+    : DEFAULT_REQUEST_CONCURRENCY;
   const batches = chunk(request.tabs, batchSize);
   const expectedSnapshot = request.snapshot ?? createTabSnapshot(request.tabs, request.revision);
   const client = request.client ?? (request.config ? new OpenAICompatibleClient(request.config, request.clientOptions) : undefined);
   if (!client) throw new AIConfigError(tr("ai.clientRequired"));
 
-  const results: BatchOrganizationResult[] = [];
   const language = request.language ?? getAppLanguage();
-  for (const tabs of batches) {
-    if (request.signal?.aborted) throw new AIConflictError(tr("ai.organizationCancelled"));
-    const sourceTabIds = tabs.map((tab) => tab.id);
-    const response = await requestBatch(client, tabs, modeResult.data, request.existingWorkspaces, language, request.signal);
-    results.push({ sourceTabIds, response });
+  const batchController = new AbortController();
+  const abortBatches = () => batchController.abort();
+  if (request.signal?.aborted) abortBatches();
+  else request.signal?.addEventListener("abort", abortBatches, { once: true });
+  let results: BatchOrganizationResult[];
+  try {
+    results = await mapWithConcurrency(batches, requestConcurrency, async (tabs) => {
+      if (batchController.signal.aborted) throw new AIConflictError(tr("ai.organizationCancelled"));
+      const sourceTabIds = tabs.map((tab) => tab.id);
+      const response = await requestBatch(client, tabs, modeResult.data, request.existingWorkspaces, language, batchController.signal);
+      return { sourceTabIds, response };
+    }, abortBatches);
+  } finally {
+    request.signal?.removeEventListener("abort", abortBatches);
   }
 
   if (request.getCurrentSnapshot) {

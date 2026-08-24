@@ -76,11 +76,18 @@ function assertUsableConfig(config: AIConfig): AIConfig {
     throw new AIConfigError(tr("ai.httpRequired"));
   }
   if (!normalized.apiKey) throw new AIConfigError(tr("ai.keyRequired"));
-  if (!normalized.model) throw new AIConfigError(tr("ai.modelRequired"));
   return normalized;
 }
 
 function headers(config: AIConfig): Record<string, string> {
+  if (config.providerId === "anthropic") {
+    return {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "x-api-key": config.apiKey,
+      "anthropic-version": "2023-06-01"
+    };
+  }
   return {
     Accept: "application/json",
     "Content-Type": "application/json",
@@ -140,12 +147,48 @@ function extractContent(payload: unknown): string {
   throw new AIHttpError(tr("ai.noContent"), 200);
 }
 
+function extractAnthropicContent(payload: unknown): string {
+  const content = typeof payload === "object" && payload !== null ? (payload as { content?: unknown }).content : undefined;
+  if (!Array.isArray(content)) throw new AIHttpError(tr("ai.noContent"), 200);
+  const text = content
+    .filter((part): part is { text: string } => typeof part === "object" && part !== null && typeof (part as { text?: unknown }).text === "string")
+    .map((part) => part.text)
+    .join("");
+  if (!text) throw new AIHttpError(tr("ai.noContent"), 200);
+  return text;
+}
+
+const NON_CHAT_MODEL_TYPES = new Set(["audio", "embedding", "image", "moderation", "rerank", "speech", "transcription", "video"]);
+
+function extractModels(payload: unknown): string[] {
+  const candidates = Array.isArray(payload)
+    ? payload
+    : typeof payload === "object" && payload !== null && Array.isArray((payload as { data?: unknown }).data)
+      ? (payload as { data: unknown[] }).data
+      : typeof payload === "object" && payload !== null && Array.isArray((payload as { models?: unknown }).models)
+        ? (payload as { models: unknown[] }).models
+        : undefined;
+  if (!candidates) throw new AIHttpError(tr("ai.invalidModelsResponse"), 200);
+  return [...new Set(candidates
+    .map((item) => {
+      if (typeof item === "string") return item;
+      if (!item || typeof item !== "object") return undefined;
+      const record = item as { id?: unknown; name?: unknown; model?: unknown; type?: unknown };
+      if (typeof record.type === "string" && NON_CHAT_MODEL_TYPES.has(record.type.toLowerCase())) return undefined;
+      return [record.id, record.name, record.model].find((value): value is string => typeof value === "string" && Boolean(value.trim()));
+    })
+    .filter((id): id is string => Boolean(id)))]
+    .sort((left, right) => left.localeCompare(right));
+}
+
 export class OpenAICompatibleClient implements AIClient {
   readonly config: AIConfig;
   private readonly fetchImpl: AIFetch;
   private readonly logger?: DebugLogger;
   private readonly retry: RetryOptions;
   private supportsGPT55ReasoningEffort: boolean | undefined;
+  private supportsThinkingControl: boolean | undefined;
+  private supportsEnableThinkingControl: boolean | undefined;
 
   constructor(config: AIConfig, options: OpenAICompatibleClientOptions = {}) {
     this.config = assertUsableConfig(config);
@@ -156,23 +199,52 @@ export class OpenAICompatibleClient implements AIClient {
 
   async complete(messages: readonly ChatMessage[], options: CompleteOptions = {}): Promise<string> {
     if (!messages.length) throw new AIConfigError(tr("ai.chatRequired"));
+    if (!this.config.model) throw new AIConfigError(tr("ai.modelRequired"));
     await ensureAIOriginPermission(this.config.baseUrl);
-    const thinking = options.thinking ?? (isDeepSeekCompatible(this.config) ? "disabled" : undefined);
+    const inferredThinking = (isDeepSeekCompatible(this.config) || this.config.providerId === "volcengine-ark")
+      && this.supportsThinkingControl !== false
+      ? "disabled"
+      : undefined;
+    const thinking = options.thinking ?? inferredThinking;
+    const inferredEnableThinking = ["alibaba-model-studio", "siliconflow"].includes(this.config.providerId)
+      && this.supportsEnableThinkingControl !== false
+      ? false
+      : undefined;
+    const temperature = options.temperature ?? (this.config.providerId === "anthropic"
+      ? undefined
+      : this.config.providerId === "zhipu"
+        ? 0.01
+        : 0);
     // Tab organization is a latency-sensitive classification task. GPT-5.5
     // defaults to medium reasoning, so opt out unless the caller explicitly
     // requests a different effort.
     const inferredReasoningEffort = isGPT55(this.config) && this.supportsGPT55ReasoningEffort !== false ? "none" : undefined;
     const reasoningEffort = options.reasoningEffort ?? inferredReasoningEffort;
-    const body = {
-      model: this.config.model,
-      messages,
-      temperature: options.temperature ?? 0,
-      ...(options.responseFormat === "text" ? {} : { response_format: { type: "json_object" } }),
-      ...(options.maxTokens === undefined ? {} : { max_tokens: Math.max(1, Math.floor(options.maxTokens)) }),
-      ...(thinking === undefined ? {} : { thinking: { type: thinking } }),
-      ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort })
-    };
-    const url = endpoint(this.config.baseUrl, "chat/completions");
+    const isAnthropic = this.config.providerId === "anthropic";
+    const anthropicSystem = isAnthropic
+      ? messages.filter((message) => message.role === "system").map((message) => message.content).join("\n")
+      : "";
+    const body: Record<string, unknown> = isAnthropic
+      ? {
+          model: this.config.model,
+          ...(anthropicSystem ? { system: anthropicSystem } : {}),
+          messages: messages
+            .filter((message) => message.role !== "system")
+            .map((message) => ({ role: message.role, content: message.content })),
+          max_tokens: Math.max(1, Math.floor(options.maxTokens ?? 2_048)),
+          ...(thinking === undefined ? {} : { thinking: { type: thinking } })
+        }
+      : {
+          model: this.config.model,
+          messages,
+          ...(temperature === undefined ? {} : { temperature }),
+          ...(options.responseFormat === "text" ? {} : { response_format: { type: "json_object" } }),
+          ...(options.maxTokens === undefined ? {} : { max_tokens: Math.max(1, Math.floor(options.maxTokens)) }),
+          ...(thinking === undefined ? {} : { thinking: { type: thinking } }),
+          ...(inferredEnableThinking === undefined ? {} : { enable_thinking: inferredEnableThinking }),
+          ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort })
+        };
+    const url = endpoint(this.config.baseUrl, isAnthropic ? "messages" : "chat/completions");
     this.logger?.debug("ai.request", {
       method: "POST",
       url,
@@ -189,19 +261,41 @@ export class OpenAICompatibleClient implements AIClient {
     try {
       response = await send(body);
       if (inferredReasoningEffort !== undefined) this.supportsGPT55ReasoningEffort = true;
+      if (inferredThinking !== undefined) this.supportsThinkingControl = true;
+      if (inferredEnableThinking !== undefined) this.supportsEnableThinkingControl = true;
     } catch (error) {
       const rejectedInferredEffort = inferredReasoningEffort !== undefined
         && options.reasoningEffort === undefined
         && error instanceof AIHttpError
         && (error.status === 400 || error.status === 422)
         && /reasoning(?:[_. ]?effort)?/i.test(error.message);
-      if (!rejectedInferredEffort) throw error;
-      this.supportsGPT55ReasoningEffort = false;
-      const { reasoning_effort: _unsupported, ...fallbackBody } = body;
-      response = await send(fallbackBody);
+      const rejectedInferredThinking = inferredThinking !== undefined
+        && options.thinking === undefined
+        && error instanceof AIHttpError
+        && (error.status === 400 || error.status === 422)
+        && /thinking/i.test(error.message);
+      const rejectedEnableThinking = inferredEnableThinking !== undefined
+        && error instanceof AIHttpError
+        && (error.status === 400 || error.status === 422)
+        && /enable[_ .]?thinking/i.test(error.message);
+      if (rejectedInferredEffort) {
+        this.supportsGPT55ReasoningEffort = false;
+        const { reasoning_effort: _unsupported, ...fallbackBody } = body;
+        response = await send(fallbackBody);
+      } else if (rejectedInferredThinking) {
+        this.supportsThinkingControl = false;
+        const { thinking: _unsupported, ...fallbackBody } = body;
+        response = await send(fallbackBody);
+      } else if (rejectedEnableThinking) {
+        this.supportsEnableThinkingControl = false;
+        const { enable_thinking: _unsupported, ...fallbackBody } = body;
+        response = await send(fallbackBody);
+      } else {
+        throw error;
+      }
     }
     const payload = await readJSON(response);
-    const content = extractContent(payload);
+    const content = isAnthropic ? extractAnthropicContent(payload) : extractContent(payload);
     this.logger?.debug("ai.response", { status: response.status, contentLength: content.length });
     return content;
   }
@@ -239,12 +333,7 @@ export class OpenAICompatibleClient implements AIClient {
       headers: headers(this.config)
     }, { ...this.retry, ...options });
     const payload = await readJSON(response);
-    const models =
-      typeof payload === "object" && payload !== null && Array.isArray((payload as { data?: unknown }).data)
-        ? (payload as { data: unknown[] }).data
-            .map((item) => (item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string" ? (item as { id: string }).id : undefined))
-            .filter((id): id is string => Boolean(id))
-        : [];
+    const models = extractModels(payload);
     return { ok: true, status: response.status, models };
   }
 }

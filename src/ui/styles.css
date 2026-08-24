@@ -22,6 +22,7 @@
 html, body, #root { min-height: 100%; margin: 0; }
 body { min-width: 280px; background: #f7f8fa; }
 button, input, textarea { font: inherit; }
+select { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .6; }
@@ -251,6 +252,11 @@ a { color: inherit; text-decoration: none; }
 .workspace-detail { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 12px 14px; border: 1px solid #e6e9ec; border-radius: 9px; background: #fff; }
 .workspace-detail > div { display: flex; align-items: center; gap: 7px; white-space: nowrap; }.workspace-detail > div span:last-child { color: #9da7b0; font-size: 10px; }.workspace-detail p { min-width: 0; flex: 1; margin: 0; overflow: hidden; color: #89949d; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .settings-card { max-width: 640px; padding: 16px; border: 1px solid #e5e8ec; border-radius: 10px; background: #fff; }
+.provider-select { cursor: pointer; }
+.field-label-row { min-height: 25px; display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
+.field-label-row .field-label { margin-bottom: 6px; }
+.field-mode-button { margin-bottom: 5px; padding: 0; border: 0; color: #a35b45; background: transparent; font-size: 9px; }
+.field-mode-button:hover { color: var(--accent-dark); text-decoration: underline; }
 .form-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.settings-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 17px; color: #9aa4ad; font-size: 9px; }
 .backup-card { display: flex; align-items: center; gap: 12px; padding: 15px; border: 1px solid #e5e8ec; border-radius: 10px; background: #fff; }.backup-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; color: #a45f49; background: var(--accent-soft); font-size: 18px; }.backup-card > div:nth-child(2) { min-width: 0; flex: 1; }.backup-card strong { color: #485460; font-size: 11px; }.backup-card p { margin: 4px 0 0; color: #99a3ac; font-size: 9px; }.muted-note { margin: 9px 1px 0; color: #adb5bc; font-size: 9px; }
 

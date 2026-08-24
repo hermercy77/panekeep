@@ -4,6 +4,8 @@ Local-first browser workspaces for Chrome and Edge on macOS and Windows.
 
 The first release keeps tab metadata local, uses the browser's native tab groups, and only applies AI organization after an explicit user confirmation.
 
+AI settings include curated presets for common global and mainland-China providers, plus a Custom OpenAI-compatible option. Anthropic uses its native Messages API; the other presets use OpenAI Chat Completions compatibility. A connection test loads the provider's current model list when available, and model IDs can always be entered manually.
+
 ## Development
 
 ```bash
