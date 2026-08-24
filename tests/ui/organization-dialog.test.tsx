@@ -18,6 +18,41 @@ afterEach(() => {
 });
 
 describe("OrganizationDialog selection", () => {
+  it("keeps the tab checklist primary and uses compact organization modes", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const onGenerate = vi.fn(async () => undefined);
+
+    await act(async () => root.render(
+      <OrganizationDialog
+        open
+        tabs={groupedTabs}
+        mode="purpose"
+        preview={null}
+        loading={false}
+        applying={false}
+        error={null}
+        onModeChange={vi.fn()}
+        onGenerate={onGenerate}
+        onConfirm={vi.fn(async () => undefined)}
+        onClose={vi.fn()}
+      />
+    ));
+
+    expect(host.querySelectorAll(".selection-item")).toHaveLength(2);
+    expect(host.textContent).toContain("按目的");
+    expect(host.textContent).toContain("按类型");
+    expect(host.textContent).not.toContain("工作、研究、稍后阅读");
+    expect(host.textContent).not.toContain("准备好整理你的标签了吗");
+    const selectAll = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "全选");
+    const generate = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "生成预览");
+    await act(async () => selectAll?.click());
+    await act(async () => generate?.click());
+    expect(onGenerate).toHaveBeenCalledWith("purpose", ["tab-1", "tab-2"]);
+    await act(async () => root.unmount());
+  });
+
   it("preserves manual selections across live tab snapshot refreshes", async () => {
     const host = document.createElement("div");
     document.body.append(host);
@@ -149,12 +184,52 @@ describe("OrganizationDialog selection", () => {
       />
     ));
 
-    expect(host.textContent).toContain("AI 建议保持未分类");
+    expect(host.textContent).toContain("1 个标签");
+    expect(host.textContent).toContain("未分类");
+    expect(host.textContent).not.toContain("AI 建议保持未分类");
     const confirm = [...host.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent?.includes("确认并应用"));
     expect(confirm?.disabled).toBe(false);
     await act(async () => confirm?.click());
     expect(onConfirm).toHaveBeenCalledWith(preview);
+    await act(async () => root.unmount());
+  });
+
+  it("returns to the checklist while regenerating a preview", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const onGenerate = vi.fn(async () => undefined);
+    const preview = {
+      mode: "purpose" as const,
+      sourceTabIds: ["tab-1"],
+      sourceFingerprint: "fixture-fingerprint",
+      groups: [{ id: "group-1", name: "音乐", description: "", tags: [], existingWorkspaceId: null, tabIds: ["tab-1"] }],
+      unclassifiedTabIds: []
+    };
+
+    await act(async () => root.render(
+      <OrganizationDialog
+        open
+        tabs={[{ ...groupedTabs[0], workspaceId: null, groupId: undefined }, groupedTabs[1]]}
+        mode="purpose"
+        preview={preview}
+        loading={false}
+        applying={false}
+        error={null}
+        onModeChange={vi.fn()}
+        onGenerate={onGenerate}
+        onConfirm={vi.fn(async () => undefined)}
+        onClose={vi.fn()}
+      />
+    ));
+
+    const regenerate = [...host.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("重新生成"));
+    await act(async () => regenerate?.click());
+    expect(host.querySelector(".selection-list")).not.toBeNull();
+    expect(host.querySelector(".preview-panel")).toBeNull();
+    expect(onGenerate).toHaveBeenCalledWith("purpose", ["tab-1"]);
     await act(async () => root.unmount());
   });
 });

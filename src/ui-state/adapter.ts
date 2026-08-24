@@ -14,10 +14,16 @@ import {
   type TabFridgeSnapshot,
   type WorkspaceDraft
 } from "./model";
+import { getAppLanguage, translate, type MessageKey } from "../i18n";
+import type { BackupImportResult } from "../shared/backup";
 
 const DEFAULT_WORKSPACE_COLOR = "slate";
 export const ORGANIZATION_PREVIEW_BATCH_SIZE = 50;
 export const ORGANIZATION_PREVIEW_TIMEOUT_MS = 59_000;
+
+function tr(key: MessageKey, variables?: Record<string, string | number | undefined>): string {
+  return translate(getAppLanguage(), key, variables);
+}
 
 function now(): number {
   return Date.now();
@@ -133,7 +139,7 @@ function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabF
     },
     async updateWorkspace(id, draft) {
       const current = snapshot.workspaces.find((workspace) => workspace.id === id);
-      if (!current) throw new Error("找不到要编辑的工作区");
+      if (!current) throw new Error(tr("error.workspaceNotFound"));
       const workspace: Workspace = {
         ...current,
         ...draft,
@@ -160,7 +166,7 @@ function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabF
     },
     async moveTab(tabId, workspaceId) {
       if (workspaceId && !snapshot.workspaces.some((workspace) => workspace.id === workspaceId)) {
-        throw new Error("目标工作区不存在");
+        throw new Error(tr("error.targetWorkspaceMissing"));
       }
       snapshot = {
         ...snapshot,
@@ -188,12 +194,12 @@ function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabF
     },
     async activateTab(tabId) {
       const tab = snapshot.tabs.find((item) => item.id === tabId);
-      if (!tab) throw new Error("找不到标签");
+      if (!tab) throw new Error(tr("error.tabMissing"));
       // The browser adapter turns this into a tabs.update call. The in-memory
       // adapter keeps activation local so the UI remains usable in a preview.
     },
     async requestOrganization() {
-      throw new Error("请先配置 AI API，再开始整理");
+      throw new Error(tr("error.configureAI"));
     },
     async applyOrganization(preview) {
       const workspaceByGroup = new Map<string, string>();
@@ -253,7 +259,7 @@ export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdap
     try {
       const response = (await runtime.sendMessage({ source: UI_MESSAGE_SOURCE, action, payload })) as Record<string, unknown> | undefined;
       if (!response) return undefined;
-      if (response.ok === false) throw new Error(typeof response.error === "string" ? response.error : "操作失败");
+      if (response.ok === false) throw new Error(typeof response.error === "string" ? response.error : tr("error.operationFailed"));
       const remoteSnapshot = normalizeSnapshot(response.snapshot ?? response);
       if (remoteSnapshot) {
         // Keep the fallback in sync for operations unsupported by an older
@@ -318,16 +324,16 @@ export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdap
         bridge("organization.preview", { mode, tabIds, requestId }),
         timeoutMs,
         batches === 1
-          ? "AI 整理超过 59 秒，请稍后重试或更换响应更快的模型"
-          : `AI 整理超过 ${batches * 59} 秒，请减少本次标签数量后重试`,
+          ? tr("error.previewTimeout")
+          : tr("error.previewBatchTimeout", { seconds: batches * 59 }),
         () => { void bridge("organization.cancel", { requestId }).catch(() => undefined); }
       );
       if (result && typeof result === "object" && "groups" in result) return result as OrganizationPreview;
-      throw new Error("请先配置 AI API，再开始整理");
+      throw new Error(tr("error.configureAI"));
     },
     async applyOrganization(preview) {
       const result = await bridge("organization.apply", { preview });
-      if (result === undefined) throw new Error("AI 整理服务不可用");
+      if (result === undefined) throw new Error(tr("error.aiUnavailable"));
     },
     async exportBackup() {
       const result = await bridge("backup.export");
@@ -335,11 +341,15 @@ export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdap
       if (result && typeof result === "object" && "json" in result && typeof (result as { json?: unknown }).json === "string") {
         return (result as { json: string }).json;
       }
-      throw new Error("无法导出 JSON 备份");
+      throw new Error(tr("error.exportFailed"));
     },
     async importBackup(json) {
       const result = await bridge("backup.import", { json });
-      if (result === undefined) throw new Error("无法导入 JSON 备份");
+      if (result === undefined) throw new Error(tr("error.importFailed"));
+      if (!result || typeof result !== "object" || !("backup" in result) || !Array.isArray((result as { skippedTabs?: unknown }).skippedTabs)) {
+        throw new Error(tr("error.importFailed"));
+      }
+      return result as BackupImportResult;
     },
     subscribe(listener) {
       const unsubscribeFallback = fallback.subscribe?.(listener) ?? (() => undefined);

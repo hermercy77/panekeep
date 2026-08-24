@@ -5,6 +5,7 @@ import { fetchWithRetry, type AIFetch, type RetryOptions } from "./http";
 import { parseStrictJson } from "./schema";
 import { redactSecrets, type DebugLogger } from "../debug/logger";
 import { ensureAIOriginPermission } from "./permissions";
+import { getAppLanguage, translate } from "../i18n";
 
 export interface AIClient {
   complete(messages: readonly ChatMessage[], options?: CompleteOptions): Promise<string>;
@@ -42,6 +43,10 @@ export interface OpenAICompatibleClientOptions {
   retry?: RetryOptions;
 }
 
+function tr(key: Parameters<typeof translate>[1], variables?: Record<string, string | number | undefined>): string {
+  return translate(getAppLanguage(), key, variables);
+}
+
 const defaultFetch: AIFetch = async (input, init) => {
   const response = await fetch(input, init);
   return response;
@@ -52,7 +57,7 @@ function endpoint(baseUrl: string, path: string): string {
   try {
     return new URL(normalizedPath, `${baseUrl.replace(/\/+$/, "")}/`).toString();
   } catch (error) {
-    throw new AIConfigError("Invalid AI base URL", error);
+    throw new AIConfigError(tr("ai.invalidBaseUrl"), error);
   }
 }
 
@@ -62,13 +67,13 @@ function assertUsableConfig(config: AIConfig): AIConfig {
   try {
     protocol = new URL(normalized.baseUrl).protocol;
   } catch (error) {
-    throw new AIConfigError("Invalid AI base URL", error);
+    throw new AIConfigError(tr("ai.invalidBaseUrl"), error);
   }
   if (protocol !== "https:" && protocol !== "http:") {
-    throw new AIConfigError("AI base URL must use HTTP or HTTPS");
+    throw new AIConfigError(tr("ai.httpRequired"));
   }
-  if (!normalized.apiKey) throw new AIConfigError("An AI API key is required");
-  if (!normalized.model) throw new AIConfigError("An AI model is required");
+  if (!normalized.apiKey) throw new AIConfigError(tr("ai.keyRequired"));
+  if (!normalized.model) throw new AIConfigError(tr("ai.modelRequired"));
   return normalized;
 }
 
@@ -85,7 +90,7 @@ async function readJSON(response: { json?: () => Promise<unknown>; text?: () => 
     try {
       return await response.json();
     } catch (error) {
-      if (!response.text) throw new AIInvalidJsonError("AI provider returned invalid JSON", error);
+      if (!response.text) throw new AIInvalidJsonError(tr("ai.invalidJson"), error);
     }
   }
   if (response.text) {
@@ -93,19 +98,19 @@ async function readJSON(response: { json?: () => Promise<unknown>; text?: () => 
     try {
       return JSON.parse(text);
     } catch (error) {
-      throw new AIInvalidJsonError("AI provider returned invalid JSON", error);
+      throw new AIInvalidJsonError(tr("ai.invalidJson"), error);
     }
   }
-  throw new AIInvalidJsonError("AI provider returned an empty response");
+  throw new AIInvalidJsonError(tr("ai.emptyResponse"));
 }
 
 function extractContent(payload: unknown): string {
   if (typeof payload !== "object" || payload === null || !("choices" in payload)) {
-    throw new AIHttpError("AI provider response did not contain choices", 200);
+    throw new AIHttpError(tr("ai.noChoices"), 200);
   }
   const choices = (payload as { choices?: unknown }).choices;
   if (!Array.isArray(choices) || choices.length === 0) {
-    throw new AIHttpError("AI provider returned no choices", 200);
+    throw new AIHttpError(tr("ai.noChoices"), 200);
   }
   const message = choices[0] && typeof choices[0] === "object" ? (choices[0] as { message?: unknown }).message : undefined;
   const content = message && typeof message === "object" ? (message as { content?: unknown }).content : undefined;
@@ -117,7 +122,7 @@ function extractContent(payload: unknown): string {
       .join("");
     if (text) return text;
   }
-  throw new AIHttpError("AI provider response did not contain message content", 200);
+  throw new AIHttpError(tr("ai.noContent"), 200);
 }
 
 export class OpenAICompatibleClient implements AIClient {
@@ -134,7 +139,7 @@ export class OpenAICompatibleClient implements AIClient {
   }
 
   async complete(messages: readonly ChatMessage[], options: CompleteOptions = {}): Promise<string> {
-    if (!messages.length) throw new AIConfigError("At least one chat message is required");
+    if (!messages.length) throw new AIConfigError(tr("ai.chatRequired"));
     await ensureAIOriginPermission(this.config.baseUrl);
     const body = {
       model: this.config.model,
@@ -171,7 +176,7 @@ export class OpenAICompatibleClient implements AIClient {
     if (!schema) return json as T;
     const parsed = schema.safeParse(json);
     if (parsed.success === false) {
-      throw new AIValidationError("AI response failed schema validation", [parsed.error]);
+      throw new AIValidationError(tr("ai.schemaFailed"), [parsed.error]);
     }
     return parsed.data;
   }

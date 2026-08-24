@@ -16,6 +16,7 @@ import {
   type OrganizationResponse
 } from "./schema";
 import { assertSnapshotUnchanged, createTabSnapshot, type TabSnapshot } from "./snapshot";
+import { getAppLanguage, translate, type AppLanguage } from "../i18n";
 
 export interface OrganizationPipelineRequest {
   tabs: readonly TabRecord[];
@@ -31,6 +32,7 @@ export interface OrganizationPipelineRequest {
   getCurrentSnapshot?: () => TabSnapshot | Promise<TabSnapshot>;
   getCurrentTabs?: () => readonly TabRecord[] | Promise<readonly TabRecord[]>;
   signal?: AbortSignal;
+  language?: AppLanguage;
 }
 
 export interface BatchOrganizationResult {
@@ -40,8 +42,12 @@ export interface BatchOrganizationResult {
 
 const DEFAULT_BATCH_SIZE = 50;
 
+function tr(key: Parameters<typeof translate>[1], variables?: Record<string, string | number | undefined>): string {
+  return translate(getAppLanguage(), key, variables);
+}
+
 export function chunk<T>(values: readonly T[], size: number): T[][] {
-  if (!Number.isInteger(size) || size <= 0) throw new RangeError("Batch size must be a positive integer");
+  if (!Number.isInteger(size) || size <= 0) throw new RangeError(tr("ai.batchSizeInvalid"));
   const batches: T[][] = [];
   for (let index = 0; index < values.length; index += size) batches.push([...values.slice(index, index + size)]);
   return batches;
@@ -50,7 +56,7 @@ export function chunk<T>(values: readonly T[], size: number): T[][] {
 function ensureTabInput(tabs: readonly TabRecord[]): void {
   const ids = tabs.map((tab) => tab.id);
   if (ids.some((id) => !id) || new Set(ids).size !== ids.length) {
-    throw new AIValidationError("AI organization requires unique, non-empty tab IDs");
+    throw new AIValidationError(tr("ai.duplicateTabIds"));
   }
 }
 
@@ -68,10 +74,12 @@ export function mergeBatchOrganizationResponses(
   batches: readonly BatchOrganizationResult[],
   mode: OrganizationMode,
   sourceTabIds: readonly string[],
-  sourceFingerprint: string
+  sourceFingerprint: string,
+  existingWorkspaces: OrganizationPipelineRequest["existingWorkspaces"] = []
 ): OrganizationPreview {
   const groups: OrganizationResponse["groups"] = [];
-  const groupById = new Map<string, OrganizationResponse["groups"][number]>();
+  const groupByKey = new Map<string, OrganizationResponse["groups"][number]>();
+  const workspaceById = new Map((existingWorkspaces ?? []).map((workspace) => [workspace.id, workspace]));
   const unclassifiedTabIds: string[] = [];
   const seenUnclassified = new Set<string>();
 
@@ -79,16 +87,24 @@ export function mergeBatchOrganizationResponses(
     // Validate every batch before mutating the merged output.
     const response = parseAndValidateOrganizationResponse(batch.response, batch.sourceTabIds);
     for (const group of response.groups) {
-      const existing = groupById.get(group.id);
+      const workspace = group.existingWorkspaceId ? workspaceById.get(group.existingWorkspaceId) : undefined;
+      if (group.existingWorkspaceId && !workspace) {
+        throw new AIValidationError(tr("ai.unknownWorkspace", { id: group.existingWorkspaceId }));
+      }
+      const normalized = workspace
+        ? { ...group, name: workspace.name, description: workspace.description, tags: [...workspace.tags] }
+        : group;
+      const groupKey = group.existingWorkspaceId ? `existing:${group.existingWorkspaceId}` : `new:${group.id}`;
+      const existing = groupByKey.get(groupKey);
       if (!existing) {
-        const copy = { ...group, tabIds: [...group.tabIds], tags: [...group.tags] };
+        const copy = { ...normalized, tabIds: [...normalized.tabIds], tags: [...normalized.tags] };
         groups.push(copy);
-        groupById.set(group.id, copy);
+        groupByKey.set(groupKey, copy);
       } else {
-        if (!sameGroupMetadata(existing, group)) {
-          throw new AIValidationError(`AI response was rejected in full: conflicting metadata for group ${group.id}`);
+        if (!sameGroupMetadata(existing, normalized)) {
+          throw new AIValidationError(tr("ai.groupMetadataConflict", { id: group.id }));
         }
-        existing.tabIds.push(...group.tabIds);
+        existing.tabIds.push(...normalized.tabIds);
       }
     }
     for (const tabId of response.unclassifiedTabIds) {
@@ -112,28 +128,30 @@ async function requestBatch(
   tabs: readonly TabRecord[],
   mode: OrganizationMode,
   existingWorkspaces: OrganizationPipelineRequest["existingWorkspaces"],
+  language: AppLanguage,
   signal?: AbortSignal
 ): Promise<OrganizationResponse> {
-  const messages = buildOrganizationMessages({ mode, tabs, existingWorkspaces });
+  const messages = buildOrganizationMessages({ mode, tabs, existingWorkspaces, language });
   const raw = await client.completeJSON(messages, organizationResponseSchema, { signal });
   return parseAndValidateOrganizationResponse(raw, tabs.map((tab) => tab.id));
 }
 
 export async function organizeTabs(request: OrganizationPipelineRequest): Promise<OrganizationPreview> {
   const modeResult = organizationModeSchema.safeParse(request.mode);
-  if (!modeResult.success) throw new AIValidationError("Unsupported organization mode", modeResult.error.issues);
+  if (!modeResult.success) throw new AIValidationError(tr("ai.unsupportedMode"), modeResult.error.issues);
   ensureTabInput(request.tabs);
   const batchSize = request.batchSize ?? DEFAULT_BATCH_SIZE;
   const batches = chunk(request.tabs, batchSize);
   const expectedSnapshot = request.snapshot ?? createTabSnapshot(request.tabs, request.revision);
   const client = request.client ?? (request.config ? new OpenAICompatibleClient(request.config, request.clientOptions) : undefined);
-  if (!client) throw new AIConfigError("An AI client or AI configuration is required");
+  if (!client) throw new AIConfigError(tr("ai.clientRequired"));
 
   const results: BatchOrganizationResult[] = [];
+  const language = request.language ?? getAppLanguage();
   for (const tabs of batches) {
-    if (request.signal?.aborted) throw new AIConflictError("AI organization was cancelled");
+    if (request.signal?.aborted) throw new AIConflictError(tr("ai.organizationCancelled"));
     const sourceTabIds = tabs.map((tab) => tab.id);
-    const response = await requestBatch(client, tabs, modeResult.data, request.existingWorkspaces, request.signal);
+    const response = await requestBatch(client, tabs, modeResult.data, request.existingWorkspaces, language, request.signal);
     results.push({ sourceTabIds, response });
   }
 
@@ -149,7 +167,8 @@ export async function organizeTabs(request: OrganizationPipelineRequest): Promis
     results,
     modeResult.data,
     request.tabs.map((tab) => tab.id),
-    expectedSnapshot.fingerprint
+    expectedSnapshot.fingerprint,
+    request.existingWorkspaces
   );
 }
 

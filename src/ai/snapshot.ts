@@ -1,5 +1,6 @@
 import type { TabRecord } from "../shared/contracts";
 import { AIConflictError, AIValidationError } from "./errors";
+import { getAppLanguage, translate } from "../i18n";
 
 export interface TabSnapshot {
   fingerprint: string;
@@ -32,7 +33,6 @@ export function fingerprintTabs(tabs: readonly TabRecord[]): string {
       index: tab.index,
       pinned: tab.pinned,
       groupId: tab.groupId,
-      lastActivatedAt: tab.lastActivatedAt,
       specialReason: tab.specialReason
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
@@ -42,7 +42,7 @@ export function fingerprintTabs(tabs: readonly TabRecord[]): string {
 export function createTabSnapshot(tabs: readonly TabRecord[], revision?: string | number): TabSnapshot {
   const tabIds = tabs.map((tab) => tab.id);
   if (new Set(tabIds).size !== tabIds.length) {
-    throw new AIValidationError("Cannot snapshot tabs with duplicate IDs");
+    throw new AIValidationError(translate(getAppLanguage(), "ai.snapshotDuplicateIds"));
   }
   return {
     fingerprint: fingerprintTabs(tabs),
@@ -58,7 +58,7 @@ export function assertSnapshotUnchanged(
   const actual: TabSnapshot = Array.isArray(current) ? createTabSnapshot(current) : (current as TabSnapshot);
   const sameRevision = expected.revision === undefined || expected.revision === actual.revision;
   if (!sameRevision || expected.fingerprint !== actual.fingerprint) {
-    throw new AIConflictError("Tabs changed while the AI request was in progress");
+    throw new AIConflictError(translate(getAppLanguage(), "ai.tabsChanged"));
   }
 }
 

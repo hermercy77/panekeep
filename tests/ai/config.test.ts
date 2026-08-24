@@ -50,5 +50,9 @@ describe("local AI config storage", () => {
       tone: "success",
       message: "连接成功，可用模型 1 个"
     });
+    expect(describeModelAvailability("missing", ["available"], "en")).toEqual({
+      tone: "error",
+      message: "Connected, but “missing” is unavailable. Available models: available"
+    });
   });
 });

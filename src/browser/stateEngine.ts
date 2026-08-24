@@ -13,7 +13,14 @@ import {
   specialPageReason,
   STORAGE_DEBOUNCE_MS
 } from "../shared/constants";
-import { createBackup, parseBackup, stringifyBackup, type StateSnapshot } from "../shared/backup";
+import {
+  createBackup,
+  parseBackup,
+  stringifyBackup,
+  type BackupImportResult,
+  type BackupImportSkippedTab,
+  type StateSnapshot
+} from "../shared/backup";
 import { addBrowserListener, getBrowserApi, invokeBrowser, type BrowserEvent, type BrowserLike } from "./api";
 import { browserTabGroupId, classifyBrowserTab } from "./classify";
 import { DebouncedSaver } from "../storage/debouncedSaver";
@@ -22,6 +29,7 @@ import { loadAIConfig } from "../ai/config";
 import { organizeTabs } from "../ai/pipeline";
 import { fingerprintTabs } from "../ai/snapshot";
 import { organizationPreviewSchema } from "../shared/contracts";
+import { getAppLanguage, translate } from "../i18n";
 
 export interface BrowserStateEngineOptions {
   api?: BrowserLike;
@@ -92,6 +100,10 @@ interface NativeGroupLike {
 type StateListener = (state: StateSnapshot) => void;
 
 const EMPTY_STATE: StateSnapshot = { windows: [], workspaces: [], tabs: [] };
+
+function tr(key: Parameters<typeof translate>[1], variables?: Record<string, string | number | undefined>): string {
+  return translate(getAppLanguage(), key, variables);
+}
 
 /**
  * Synchronizes Chromium windows, tabs and native tab groups into the local
@@ -185,9 +197,9 @@ export class BrowserStateEngine {
 
   async createWorkspace(input: WorkspaceInput): Promise<Workspace> {
     const targetWindow = this.resolveTargetWindow(input.windowId, input.windowKey);
-    if (!targetWindow) throw new Error("A target browser window is required to create a workspace");
+    if (!targetWindow) throw new Error(tr("error.targetWindowRequired"));
     const name = input.name.trim();
-    if (!name) throw new Error("Workspace name cannot be empty");
+    if (!name) throw new Error(tr("error.workspaceNameEmpty"));
 
     const workspace: Workspace = {
       id: this.newLocalWorkspaceId(targetWindow.key),
@@ -237,9 +249,9 @@ export class BrowserStateEngine {
 
   async updateWorkspace(workspaceId: string, patch: WorkspacePatch): Promise<Workspace> {
     const workspace = this.state.workspaces.find((item) => item.id === workspaceId);
-    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+    if (!workspace) throw new Error(tr("error.workspaceNotFound"));
     const nextName = patch.name === undefined ? workspace.name : patch.name.trim();
-    if (!nextName) throw new Error("Workspace name cannot be empty");
+    if (!nextName) throw new Error(tr("error.workspaceNameEmpty"));
 
     if (this.api && workspace.groupId !== undefined && this.api.tabGroups?.update) {
       await invokeBrowser(this.api.tabGroups, "update", workspace.groupId, {
@@ -304,10 +316,10 @@ export class BrowserStateEngine {
       }
     } else if (options.windowId !== undefined || options.windowKey !== undefined) {
       const targetWindow = this.resolveTargetWindow(options.windowId, options.windowKey);
-      if (!targetWindow) throw new Error("Target browser window not found");
+      if (!targetWindow) throw new Error(tr("error.targetWindowMissing"));
       movedTabIds = await this.moveTabsToWindow(eligible, targetWindow.nativeId);
     } else {
-      throw new Error("A workspaceId or target window is required");
+      throw new Error(tr("error.workspaceTargetRequired"));
     }
 
     if (this.api) {
@@ -326,7 +338,7 @@ export class BrowserStateEngine {
   async activateTab(tabId: string): Promise<void> {
     const tab = this.state.tabs.find((item) => item.id === tabId);
     const nativeId = this.toNativeId(tabId);
-    if (!tab || nativeId === undefined) throw new Error("Tab not found");
+    if (!tab || nativeId === undefined) throw new Error(tr("error.tabMissing"));
     if (this.api) {
       await invokeBrowser(this.api.tabs, "update", nativeId, { active: true });
       const window = this.state.windows.find((item) => item.key === tab.windowKey);
@@ -349,11 +361,14 @@ export class BrowserStateEngine {
   async moveWorkspace(workspaceId: string, beforeWorkspaceId?: string): Promise<void> {
     const source = this.state.workspaces.find((workspace) => workspace.id === workspaceId);
     if (!source) return;
+    const requestedBefore = beforeWorkspaceId
+      ? this.state.workspaces.find((workspace) => workspace.id === beforeWorkspaceId && workspace.windowKey === source.windowKey)
+      : undefined;
     const siblings = this.state.workspaces
       .filter((workspace) => workspace.windowKey === source.windowKey && workspace.id !== workspaceId)
       .sort(compareWorkspace);
-    const beforeIndex = beforeWorkspaceId
-      ? siblings.findIndex((workspace) => workspace.id === beforeWorkspaceId)
+    const beforeIndex = requestedBefore
+      ? siblings.findIndex((workspace) => workspace.id === requestedBefore.id)
       : siblings.length;
     const insertAt = beforeIndex < 0 ? siblings.length : beforeIndex;
     siblings.splice(insertAt, 0, source);
@@ -363,11 +378,8 @@ export class BrowserStateEngine {
     });
 
     if (this.api && source.groupId !== undefined && this.api.tabGroups?.move) {
-      const before = beforeWorkspaceId
-        ? this.state.workspaces.find((workspace) => workspace.id === beforeWorkspaceId)
-        : undefined;
-      const beforeTab = before
-        ? this.state.tabs.find((tab) => tab.workspaceId === before.id && tab.kind === "normal")
+      const beforeTab = requestedBefore
+        ? this.state.tabs.find((tab) => tab.workspaceId === requestedBefore.id && tab.kind === "normal")
         : undefined;
       try {
         await invokeBrowser(this.api.tabGroups, "move", source.groupId, {
@@ -385,22 +397,23 @@ export class BrowserStateEngine {
     return asJson ? stringifyBackup(backup) : backup;
   }
 
-  async importBackup(value: unknown): Promise<ReturnType<typeof createBackup>> {
+  async importBackup(value: unknown): Promise<BackupImportResult> {
     const backup = parseBackup(value);
+    const skippedTabs: BackupImportSkippedTab[] = [];
     if (this.api) {
       const beforeState = this.getState();
       const createdNativeWindowIds: number[] = [];
       try {
       const usedNames = new Set(this.state.workspaces.map((workspace) => workspace.name));
       const uniqueName = (base: string): string => {
-        const clean = base.trim() || "导入工作区";
+        const clean = base.trim() || tr("backup.importWorkspace");
         if (!usedNames.has(clean)) {
           usedNames.add(clean);
           return clean;
         }
         let suffix = 1;
-        let candidate = `${clean}（副本）`;
-        while (usedNames.has(candidate)) candidate = `${clean}（${suffix++}）`;
+        let candidate = `${clean}${tr("backup.copySuffix")}`;
+        while (usedNames.has(candidate)) candidate = `${clean}${tr("backup.numberedSuffix", { count: suffix++ })}`;
         usedNames.add(candidate);
         return candidate;
       };
@@ -420,6 +433,9 @@ export class BrowserStateEngine {
       for (const sourceWindow of [...backup.windows].sort((left, right) => left.order - right.order)) {
         const sourceTabs = backup.tabs
           .filter((tab) => tab.windowKey === sourceWindow.key && tab.kind !== "special")
+          .sort((left, right) => left.index - right.index);
+        const sourceSpecialTabs = backup.tabs
+          .filter((tab) => tab.windowKey === sourceWindow.key && tab.kind === "special")
           .sort((left, right) => left.index - right.index);
         const urls = sourceTabs.map((tab) => tab.url || "about:blank");
         const created = await invokeBrowser<NativeWindowLike>(this.api.windows, "create", {
@@ -442,6 +458,40 @@ export class BrowserStateEngine {
           if (nativeId === undefined) continue;
           if (sourceTab.pinned) {
             try { await invokeBrowser(this.api.tabs, "update", nativeId, { pinned: true }); } catch { /* best effort */ }
+          }
+        }
+        for (const [index, sourceTab] of sourceTabs.entries()) {
+          const nativeId = tabMap.get(sourceTab.id);
+          if (index === 0 || nativeId === undefined || typeof this.api.tabs.discard !== "function") continue;
+          try { await invokeBrowser(this.api.tabs, "discard", nativeId); } catch { /* best effort lazy restore */ }
+        }
+        let restoredSpecialTabs = 0;
+        for (const sourceTab of sourceSpecialTabs) {
+          try {
+            if (!sourceTab.url) throw new Error(tr("backup.specialRestoreFailed"));
+            const restored = await invokeBrowser<NativeTabLike>(this.api.tabs, "create", {
+              windowId: created.id,
+              url: sourceTab.url,
+              active: false
+            });
+            if (restored?.id === undefined) throw new Error(tr("backup.specialRestoreFailed"));
+            restoredSpecialTabs += 1;
+            if (typeof this.api.tabs.discard === "function") {
+              try { await invokeBrowser(this.api.tabs, "discard", restored.id); } catch { /* best effort lazy restore */ }
+            }
+          } catch {
+            skippedTabs.push({
+              id: sourceTab.id,
+              ...(sourceTab.title ? { title: sourceTab.title } : {}),
+              url: sourceTab.url,
+              reason: "browser_blocked"
+            });
+          }
+        }
+        if (sourceTabs.length === 0 && restoredSpecialTabs > 0 && typeof this.api.tabs.remove === "function") {
+          const placeholderId = nativeTabs[0]?.id;
+          if (placeholderId !== undefined) {
+            try { await invokeBrowser(this.api.tabs, "remove", placeholderId); } catch { /* keep harmless placeholder */ }
           }
         }
         const sourceWorkspaces = backup.workspaces
@@ -500,7 +550,7 @@ export class BrowserStateEngine {
       }
       this.markChanged();
       await this.saver.flush();
-      return backup;
+      return { backup, skippedTabs };
       } catch (error) {
         for (const nativeWindowId of createdNativeWindowIds) {
           try { await invokeBrowser(this.api.windows, "remove", nativeWindowId); } catch { /* best effort rollback */ }
@@ -519,7 +569,7 @@ export class BrowserStateEngine {
     this.markChanged();
     await this.saver.flush();
     this.notify();
-    return backup;
+    return { backup, skippedTabs };
   }
 
   async handleRequest(request: BackgroundRequest): Promise<unknown> {
@@ -545,7 +595,7 @@ export class BrowserStateEngine {
       case "tab-fridge/close-empty-windows":
         return this.closeEmptyWindows();
       default:
-        throw new Error(`Unknown Tab Fridge request: ${(request as { type: string }).type}`);
+        throw new Error(tr("background.unknownRequest", { action: (request as { type: string }).type }));
     }
   }
 
@@ -600,9 +650,10 @@ export class BrowserStateEngine {
         return this.applyOrganizationPreview(payload);
       case "backup.export":
         return { json: await this.exportBackup(true) };
-      case "backup.import":
-        await this.importBackup(String(payload.json ?? ""));
-        return this.getState();
+      case "backup.import": {
+        const result = await this.importBackup(String(payload.json ?? ""));
+        return { ok: true, result, snapshot: this.getState() };
+      }
       default:
         return undefined;
     }
@@ -618,9 +669,9 @@ export class BrowserStateEngine {
       (tab.kind === "normal" || tab.kind === "fixed")
       && (configuredIds.length ? configuredIds.includes(tab.id) : (tab.workspaceId === null && !tab.pinned))
     );
-    if (!eligible.length) throw new Error("没有可整理的标签");
+    if (!eligible.length) throw new Error(tr("error.noOrganizableTabs"));
     const config = await loadAIConfig();
-    if (!config.apiKey || !config.model) throw new Error("请先在管理页配置 AI API、Key 和模型");
+    if (!config.apiKey || !config.model) throw new Error(tr("error.configureAIManage"));
     const requestId = typeof payload.requestId === "string" && payload.requestId ? payload.requestId : undefined;
     const controller = new AbortController();
     if (requestId) {
@@ -634,6 +685,7 @@ export class BrowserStateEngine {
         config,
         clientOptions: { retry: { timeoutMs: 28_000, maxRetries: 1 } },
         existingWorkspaces: this.state.workspaces,
+        language: getAppLanguage(),
         getCurrentTabs: () => this.state.tabs.filter((tab) => eligible.some((item) => item.id === tab.id)),
         signal: controller.signal
       });
@@ -658,29 +710,29 @@ export class BrowserStateEngine {
     const beforeState = this.getState();
     const sourceIds = new Set(parsed.sourceTabIds);
     if (sourceIds.size !== parsed.sourceTabIds.length || sourceIds.size === 0) {
-      throw new Error("AI 整理预览的来源标签无效");
+      throw new Error(tr("error.invalidPreviewSource"));
     }
     const currentSourceTabs = this.state.tabs.filter((tab) => sourceIds.has(tab.id));
     if (currentSourceTabs.length !== sourceIds.size || currentSourceTabs.some((tab) => tab.kind === "special")) {
-      throw new Error("浏览器状态已变化，请重新整理");
+      throw new Error(tr("error.browserChanged"));
     }
     if (fingerprintTabs(currentSourceTabs) !== parsed.sourceFingerprint) {
-      throw new Error("标签在预览后发生了变化，请重新整理");
+      throw new Error(tr("error.tabChanged"));
     }
     const assignedIds: string[] = [];
     for (const group of parsed.groups) assignedIds.push(...group.tabIds);
     assignedIds.push(...parsed.unclassifiedTabIds);
     if (assignedIds.length !== sourceIds.size || new Set(assignedIds).size !== sourceIds.size || assignedIds.some((id) => !sourceIds.has(id))) {
-      throw new Error("AI 整理预览没有完整覆盖本次选中的标签");
+      throw new Error(tr("error.previewIncomplete"));
     }
     const targetWindowKey = typeof payload.targetWindowKey === "string"
       ? payload.targetWindowKey
       : this.state.windows.find((window) => window.isCurrent)?.key ?? this.state.windows[0]?.key;
-    if (!targetWindowKey) throw new Error("找不到目标窗口");
+    if (!targetWindowKey) throw new Error(tr("error.targetWindowMissing"));
     const existingIds = new Set(this.state.workspaces.map((workspace) => workspace.id));
     for (const group of parsed.groups) {
       if (group.existingWorkspaceId && !existingIds.has(group.existingWorkspaceId)) {
-        throw new Error(`AI 结果引用了不存在的工作区: ${group.existingWorkspaceId}`);
+        throw new Error(tr("error.aiUnknownWorkspace", { id: group.existingWorkspaceId }));
       }
     }
     try {
@@ -703,7 +755,7 @@ export class BrowserStateEngine {
       }
       for (const group of parsed.groups) {
         const workspaceId = workspaceByGroup.get(group.id);
-        if (!workspaceId) throw new Error("AI 结果缺少目标工作区");
+        if (!workspaceId) throw new Error(tr("error.aiMissingTarget"));
         await this.moveTabsToWorkspace(group.tabIds, workspaceId, true);
       }
       if (parsed.unclassifiedTabIds.length) {
@@ -795,7 +847,10 @@ export class BrowserStateEngine {
     const existingWindows = this.state.windows;
     const existingWorkspaces = this.state.workspaces;
     const existingTabs = this.state.tabs;
-    const allowWindowOrderReconciliation = existingWindows.length === nativeWindows.length;
+    const hasNativeWindowMatch = nativeWindows.some((nativeWindow) =>
+      nativeWindow.id !== undefined && existingWindows.some((window) => window.nativeId === nativeWindow.id)
+    );
+    const allowWindowOrderReconciliation = !hasNativeWindowMatch && existingWindows.length === nativeWindows.length;
     const nextWindows: WindowState[] = [];
     const nextWorkspaces: Workspace[] = [];
     const nextTabs: TabRecord[] = [];
@@ -834,12 +889,12 @@ export class BrowserStateEngine {
         const workspace: Workspace = {
           id: previousWorkspace?.id ?? createWorkspaceId(nativeWindowId, groupId),
           windowKey,
-          name: previousWorkspace?.name || group.title?.trim() || `Workspace ${groupIndex + 1}`,
+          name: previousWorkspace?.name || group.title?.trim() || tr("common.workspaceName", { count: groupIndex + 1 }),
           description: previousWorkspace?.description ?? "",
           tags: [...(previousWorkspace?.tags ?? [])],
           color: normalizeGroupColor(group.color ?? previousWorkspace?.color),
           groupId,
-          order: previousWorkspace?.order ?? groupIndex,
+          order: groupIndex,
           createdAt: previousWorkspace?.createdAt ?? this.now(),
           updatedAt: previousWorkspace?.updatedAt ?? this.now()
         };
@@ -855,7 +910,11 @@ export class BrowserStateEngine {
         const kind = classifyBrowserTab(nativeTab);
         const groupId = browserTabGroupId(nativeTab);
         const workspace = kind === "normal" && groupId !== undefined ? workspaceByGroup.get(groupId) : undefined;
-        const lastActivatedAt = previousTab?.lastActivatedAt ?? (nativeTab.active ? this.now() : undefined);
+        const isActive = nativeTab.active === true;
+        const becameActive = isActive && previousTab?.active !== true;
+        const lastActivatedAt = becameActive
+          ? this.now()
+          : previousTab?.lastActivatedAt ?? (isActive ? this.now() : undefined);
         const record: TabRecord = {
           id,
           windowKey,
@@ -866,6 +925,7 @@ export class BrowserStateEngine {
             ? (nativeTab.index as number)
             : tabIndex,
           pinned: nativeTab.pinned === true,
+          active: isActive,
           ...(nativeTab.title !== undefined ? { title: nativeTab.title } : {}),
           ...(nativeTab.favIconUrl !== undefined ? { faviconUrl: nativeTab.favIconUrl } : {}),
           ...(groupId !== undefined ? { groupId } : {}),
@@ -927,6 +987,9 @@ export class BrowserStateEngine {
       if (activeInfo?.tabId !== undefined) {
         const tab = this.state.tabs.find((item) => item.id === String(activeInfo.tabId));
         if (tab) {
+          for (const item of this.state.tabs) {
+            if (item.windowKey === tab.windowKey) item.active = item.id === tab.id;
+          }
           tab.lastActivatedAt = this.now();
           this.markChanged();
         }
@@ -994,10 +1057,18 @@ export class BrowserStateEngine {
 
   private async getNativeGroups(windowId: number, tabs: NativeTabLike[]): Promise<NativeGroupLike[]> {
     const groupIds = new Set<number>();
+    const firstTabIndex = new Map<number, number>();
     for (const tab of tabs) {
       const groupId = browserTabGroupId(tab);
-      if (groupId !== undefined) groupIds.add(groupId);
+      if (groupId !== undefined) {
+        groupIds.add(groupId);
+        const index = Number.isInteger(tab.index) ? tab.index as number : Number.MAX_SAFE_INTEGER;
+        firstTabIndex.set(groupId, Math.min(firstTabIndex.get(groupId) ?? Number.MAX_SAFE_INTEGER, index));
+      }
     }
+    const compareGroupPosition = (left: number, right: number) =>
+      (firstTabIndex.get(left) ?? Number.MAX_SAFE_INTEGER) - (firstTabIndex.get(right) ?? Number.MAX_SAFE_INTEGER)
+      || left - right;
     if (this.api?.tabGroups?.query) {
       try {
         const groups = await invokeBrowser<NativeGroupLike[]>(this.api.tabGroups, "query", { windowId });
@@ -1007,13 +1078,13 @@ export class BrowserStateEngine {
           }
           return groups
             .filter((group) => nativeGroupId(group.id) !== undefined)
-            .sort((left, right) => (left.id as number) - (right.id as number));
+            .sort((left, right) => compareGroupPosition(left.id as number, right.id as number));
         }
       } catch {
         // The tabGroups permission is optional in a few Chromium variants.
       }
     }
-    return [...groupIds].sort((left, right) => left - right).map((id) => ({ id, windowId }));
+    return [...groupIds].sort(compareGroupPosition).map((id) => ({ id, windowId }));
   }
 
   private resolveTargetWindow(windowId?: number, windowKey?: string): WindowState | undefined {
@@ -1031,9 +1102,9 @@ export class BrowserStateEngine {
 
   private async moveTabsToWorkspace(tabIds: string[], workspaceId: string, strict = false): Promise<string[]> {
     const workspace = this.state.workspaces.find((item) => item.id === workspaceId);
-    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+    if (!workspace) throw new Error(tr("error.workspaceNotFound"));
     const targetWindow = this.state.windows.find((item) => item.key === workspace.windowKey);
-    if (!targetWindow) throw new Error("Workspace's browser window is not open");
+    if (!targetWindow) throw new Error(tr("error.workspaceWindowClosed"));
     const moved: string[] = [];
     for (const tabId of tabIds) {
       const nativeId = this.toNativeId(tabId);
@@ -1046,7 +1117,7 @@ export class BrowserStateEngine {
         await this.moveNativeTabToWindow(nativeId, targetWindow.nativeId);
         moved.push(tabId);
       } catch {
-        if (strict) throw new Error(`无法移动标签 ${tabId}`);
+        if (strict) throw new Error(tr("error.moveTabFailed", { id: tabId }));
         // Manual operations may continue when one stale/closed tab disappears.
       }
     }
@@ -1088,7 +1159,7 @@ export class BrowserStateEngine {
         if (this.api) await this.ungroupNativeTabs([tabId]);
         moved.push(tabId);
       } catch {
-        if (strict) throw new Error(`无法移出标签 ${tabId}`);
+        if (strict) throw new Error(tr("error.unclassifyTabFailed", { id: tabId }));
         // See moveTabsToWorkspace: browser events can make an ID stale.
       }
     }
@@ -1147,9 +1218,9 @@ export class BrowserStateEngine {
     targetWindowId: number,
     workspace: Workspace
   ): Promise<number> {
-    if (!this.api) throw new Error("Browser API is unavailable");
+    if (!this.api) throw new Error(translate(getAppLanguage(), "browser.unavailable"));
     const nativeIds = tabIds.map((id) => this.toNativeId(id)).filter((id): id is number => id !== undefined);
-    if (nativeIds.length === 0) throw new Error("At least one normal tab is required to create a native group");
+    if (nativeIds.length === 0) throw new Error(tr("browser.normalTabRequired"));
     let groupId: number | undefined = workspace.groupId;
     if (groupId !== undefined) {
       try {
@@ -1165,7 +1236,7 @@ export class BrowserStateEngine {
       });
       groupId = Number(created);
     }
-    if (!Number.isInteger(groupId) || groupId < 0) throw new Error("Browser did not return a valid native group ID");
+    if (!Number.isInteger(groupId) || groupId < 0) throw new Error(tr("browser.invalidGroupId"));
     workspace.groupId = groupId;
     if (this.api.tabGroups?.update) {
       await invokeBrowser(this.api.tabGroups, "update", groupId, {

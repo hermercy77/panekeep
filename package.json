@@ -10,6 +10,7 @@
     "build:zip": "wxt zip",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:i18n": "vitest run tests/i18n",
     "test:watch": "vitest"
   },
   "dependencies": {

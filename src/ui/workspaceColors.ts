@@ -1,13 +1,13 @@
 import { normalizeGroupColor } from "../shared/constants";
 
 export const WORKSPACE_COLOR_OPTIONS = [
-  ["grey", "石板"],
-  ["blue", "蓝色"],
-  ["cyan", "青色"],
-  ["green", "绿色"],
-  ["yellow", "琥珀"],
-  ["pink", "玫瑰"],
-  ["purple", "紫色"]
+  ["grey", "color.grey"],
+  ["blue", "color.blue"],
+  ["cyan", "color.cyan"],
+  ["green", "color.green"],
+  ["yellow", "color.yellow"],
+  ["pink", "color.pink"],
+  ["purple", "color.purple"]
 ] as const;
 
 export function workspaceColorClass(color: unknown): "slate" | "blue" | "cyan" | "green" | "amber" | "rose" | "violet" {

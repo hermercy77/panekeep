@@ -5,6 +5,7 @@ import { useTabFridgeState } from "../ui-state/useTabFridgeState";
 import { OrganizationDialog } from "./OrganizationDialog";
 import { TabTree, type TabFilter, type WindowScope } from "./TabTree";
 import { WorkspaceDialog } from "./WorkspaceDialog";
+import { useI18n } from "../i18n/react";
 
 function manageUrl(): string {
   try {
@@ -20,6 +21,7 @@ function currentWindowKey(windows: { key: string; isCurrent: boolean }[]): strin
 }
 
 export function SidePanelApp() {
+  const { t } = useI18n();
   const state = useTabFridgeState();
   const { snapshot } = state;
   const [query, setQuery] = useState("");
@@ -91,7 +93,7 @@ export function SidePanelApp() {
     const preview = await state.requestOrganization(mode, tabIds);
     setAiLoading(false);
     if (preview) setAiPreview(preview);
-    else setAiError(state.error ?? "无法生成整理预览");
+    else setAiError(state.error ?? t("side.previewFailed"));
   };
 
   const applyPreview = async (preview: OrganizationPreview) => {
@@ -114,14 +116,14 @@ export function SidePanelApp() {
           </div>
           <div>
             <h1>Tab Fridge</h1>
-            <p>标签工作台</p>
+            <p>{t("side.subtitle")}</p>
           </div>
         </div>
         <div className="header-actions">
-          <button className="icon-button" type="button" onClick={() => void state.refresh()} aria-label="刷新" title="刷新">
+          <button className="icon-button" type="button" onClick={() => void state.refresh()} aria-label={t("common.refresh")} title={t("common.refresh")}>
             <RefreshCw aria-hidden="true" size={17} />
           </button>
-          <a className="icon-button" href={manageUrl()} aria-label="打开管理页" title="管理工作区">
+          <a className="icon-button" href={manageUrl()} aria-label={t("side.openManage")} title={t("side.manageWorkspaces")}>
             <Settings2 aria-hidden="true" size={17} />
           </a>
         </div>
@@ -130,18 +132,18 @@ export function SidePanelApp() {
       <section className="search-section">
         <label className="search-box">
           <Search aria-hidden="true" size={16} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标签、网址或工作区" aria-label="搜索标签、网址或工作区" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("side.search")} aria-label={t("side.search")} />
           {query ? (
-            <button className="search-clear" type="button" onClick={() => setQuery("")} aria-label="清除搜索">
+            <button className="search-clear" type="button" onClick={() => setQuery("")} aria-label={t("side.clearSearch")}>
               <X aria-hidden="true" size={14} />
             </button>
           ) : null}
         </label>
-        <div className="filter-row" role="tablist" aria-label="标签筛选">
-          <button className={filter === "unclassified" ? "filter-chip active" : "filter-chip"} type="button" onClick={() => setFilter((current) => current === "unclassified" ? "all" : "unclassified")}>未分类 <span>{unclassifiedCount}</span></button>
-          <button className={windowScope === "current" ? "filter-chip active" : "filter-chip"} type="button" onClick={() => setWindowScope((current) => current === "current" ? "all" : "current")}>当前窗口</button>
-          <select className="filter-select" value={workspaceTag} onChange={(event) => setWorkspaceTag(event.target.value)} aria-label="工作区标签筛选">
-            <option value="">工作区标签</option>
+        <div className="filter-row" role="tablist" aria-label={t("side.tabFilters")}>
+          <button className={filter === "unclassified" ? "filter-chip active" : "filter-chip"} type="button" onClick={() => setFilter((current) => current === "unclassified" ? "all" : "unclassified")}>{t("common.unclassified")} <span>{unclassifiedCount}</span></button>
+          <button className={windowScope === "current" ? "filter-chip active" : "filter-chip"} type="button" onClick={() => setWindowScope((current) => current === "current" ? "all" : "current")}>{t("side.currentWindow")}</button>
+          <select className="filter-select" value={workspaceTag} onChange={(event) => setWorkspaceTag(event.target.value)} aria-label={t("side.workspaceTagFilter")}>
+            <option value="">{t("side.workspaceTags")}</option>
             {[...new Set(snapshot.workspaces.flatMap((workspace) => workspace.tags))].sort().map((tag) => <option value={tag} key={tag}>{tag}</option>)}
           </select>
         </div>
@@ -151,7 +153,7 @@ export function SidePanelApp() {
         <div className="error-banner" role="alert">
           <CircleAlert aria-hidden="true" size={16} />
           <p>{state.error}</p>
-          <button type="button" onClick={() => state.clearError()} aria-label="关闭错误提示">
+          <button type="button" onClick={() => state.clearError()} aria-label={t("side.closeError")}>
               <X aria-hidden="true" size={14} />
           </button>
         </div>
@@ -161,7 +163,7 @@ export function SidePanelApp() {
         {state.status === "loading" && !snapshot.tabs.length && !snapshot.windows.length ? (
           <div className="loading-state" aria-live="polite">
             <span className="spinner" />
-            正在加载标签…
+            {t("side.loadingTabs")}
           </div>
         ) : (
           <TabTree
@@ -201,10 +203,10 @@ export function SidePanelApp() {
       <footer className="sidepanel-footer">
         <div className="footer-stat">
           <span className="status-dot" aria-hidden="true" />
-          <span>{snapshot.tabs.length ? `${snapshot.tabs.length} 个标签已在本地保存` : "本地优先 · 等待标签"}</span>
+          <span>{snapshot.tabs.length ? t("common.tabsCount", { count: snapshot.tabs.length }) : t("side.waitingTabs")}</span>
         </div>
         <button className="button button-ai" type="button" onClick={openAi}>
-          <ScanLine aria-hidden="true" size={16} />AI 整理
+          <ScanLine aria-hidden="true" size={16} />{t("side.aiOrganize")}
         </button>
       </footer>
 
@@ -220,14 +222,14 @@ export function SidePanelApp() {
         <div className="dialog-backdrop" role="presentation">
           <section className="dialog-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="delete-title">
             <div className="confirm-icon"><CircleAlert aria-hidden="true" size={18} /></div>
-            <h2 id="delete-title">删除「{deleteTarget.name}」？</h2>
-            <p>工作区会被删除，其中的标签会移到“未分类”，标签本身不会关闭。</p>
+            <h2 id="delete-title">{t("side.deleteTitle", { name: deleteTarget.name })}</h2>
+            <p>{t("side.deleteDescription")}</p>
             <div className="dialog-actions">
               <button className="button button-ghost" type="button" onClick={() => setDeleteTarget(null)}>
-                取消
+                {t("common.cancel")}
               </button>
               <button className="button button-danger" type="button" onClick={() => void confirmDelete()}>
-                删除工作区
+                {t("side.deleteWorkspace")}
               </button>
             </div>
           </section>

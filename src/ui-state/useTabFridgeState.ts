@@ -3,6 +3,8 @@ import type { OrganizationMode, OrganizationPreview, Workspace } from "../shared
 import { createBrowserAdapter } from "./adapter";
 import type { TabFridgeAdapter, TabFridgeSnapshot, WorkspaceDraft } from "./model";
 import { emptySnapshot } from "./model";
+import { getAppLanguage, translate } from "../i18n";
+import type { BackupImportResult } from "../shared/backup";
 
 export type UiLoadState = "loading" | "ready" | "error";
 
@@ -21,11 +23,11 @@ export interface UseTabFridgeStateResult {
   requestOrganization: (mode: OrganizationMode, tabIds?: string[]) => Promise<OrganizationPreview | null>;
   applyOrganization: (preview: OrganizationPreview) => Promise<boolean>;
   exportBackup: () => Promise<string | null>;
-  importBackup: (json: string) => Promise<boolean>;
+  importBackup: (json: string) => Promise<BackupImportResult | null>;
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message ? error.message : "暂时无法完成操作，请稍后重试";
+  return error instanceof Error && error.message ? error.message : translate(getAppLanguage(), "error.generic");
 }
 
 export function useTabFridgeState(adapter?: TabFridgeAdapter): UseTabFridgeStateResult {
@@ -161,8 +163,13 @@ export function useTabFridgeState(adapter?: TabFridgeAdapter): UseTabFridgeState
     }
   }, [stableAdapter]);
   const importBackup = useCallback(async (json: string) => {
-    if (!stableAdapter.importBackup) return false;
-    return run(() => stableAdapter.importBackup?.(json) ?? Promise.reject(new Error("导入功能不可用")), () => undefined);
+    if (!stableAdapter.importBackup) return null;
+    let imported: BackupImportResult | null = null;
+    const ok = await run(
+      () => stableAdapter.importBackup?.(json) ?? Promise.reject(new Error(translate(getAppLanguage(), "error.importUnavailable"))),
+      (value) => { imported = value; }
+    );
+    return ok ? imported : null;
   }, [run, stableAdapter]);
 
   return {

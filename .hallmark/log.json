@@ -1,5 +1,51 @@
 [
   {
+    "date": "2026-08-24",
+    "scope": "sidepanel",
+    "macrostructure": "Workbench",
+    "theme": "C-light / B-dark",
+    "enrichment": "none",
+    "brief": "Restore stable collapsible tab-type sections and native workspace ordering",
+    "knobs": {
+      "emptySections": "stable-structural-nodes",
+      "workspaceOrder": "native-tab-position",
+      "recentAccess": "compact-relative-time"
+    },
+    "slopTest": "70/70 pass",
+    "viewports": [320, 375, 414, 768, 1280]
+  },
+  {
+    "date": "2026-08-24",
+    "scope": "manage-page",
+    "macrostructure": "Workbench",
+    "theme": "C-light / B-dark",
+    "enrichment": "none",
+    "brief": "Compact the settings header and reduce vertical scrolling",
+    "knobs": {
+      "mobileHeader": "single-line-compact",
+      "secondaryLabels": "responsive-disclosure",
+      "sectionRhythm": "compressed"
+    },
+    "slopTest": "58/58 pass",
+    "viewports": [320, 375, 414, 768, 1280]
+  },
+  {
+    "date": "2026-08-23",
+    "scope": "app",
+    "macrostructure": "Workbench",
+    "theme": "C-light / B-dark",
+    "enrichment": "none",
+    "brief": "Reduce visual fatigue in organization and management flows",
+    "knobs": {
+      "density": "task-weighted",
+      "organization": "selection-first-two-stage",
+      "emptySections": "conditional",
+      "optionalMetadata": "progressive-disclosure"
+    },
+    "slopTest": "58/58 pass",
+    "viewports": [320, 375, 414, 768, 1280]
+  },
+  {
     "date": "2026-08-23",
     "scope": "app",
     "macrostructure": "Workbench",

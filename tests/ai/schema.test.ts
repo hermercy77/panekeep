@@ -28,6 +28,6 @@ describe("strict organization response validation", () => {
     expect(() => validateOrganizationPreview({
       groups: [{ ...validOrganizationResponse.groups[0], tabIds: ["tab-1", "tab-unknown"] }],
       unclassifiedTabIds: []
-    }, "purpose", ["tab-1", "tab-2"], "fixture-fingerprint")).toThrow(/rejected in full/i);
+    }, "purpose", ["tab-1", "tab-2"], "fixture-fingerprint")).toThrow(AIValidationError);
   });
 });

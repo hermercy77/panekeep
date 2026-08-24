@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TabTree } from "../../src/ui/TabTree";
 import type { TabFridgeSnapshot } from "../../src/ui-state/model";
+import { setAppLanguage } from "../../src/i18n";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -42,8 +43,10 @@ const snapshot: TabFridgeSnapshot = {
   ]
 };
 
-afterEach(() => {
+afterEach(async () => {
   document.body.innerHTML = "";
+  vi.useRealTimers();
+  await setAppLanguage("zh-CN");
 });
 
 describe("TabTree drag and drop", () => {
@@ -137,6 +140,153 @@ describe("TabTree drag and drop", () => {
     expect(host.textContent).toContain("项目 A 标签");
     expect(host.textContent).not.toContain("项目 B");
 
+    await act(async () => root.unmount());
+  });
+
+  it("reorders workspaces within one window and rejects cross-window workspace drops", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const onMoveWorkspace = vi.fn();
+    const twoWindowSnapshot: TabFridgeSnapshot = {
+      windows: [
+        ...snapshot.windows,
+        { key: "window:2", nativeId: 2, name: "第二窗口", order: 1, isCurrent: false, expanded: true }
+      ],
+      workspaces: [
+        ...snapshot.workspaces,
+        { id: "ws-c", windowKey: "window:2", name: "项目 C", description: "", tags: [], color: "purple", groupId: 3, order: 0, createdAt: 1, updatedAt: 1 }
+      ],
+      tabs: snapshot.tabs
+    };
+
+    await act(async () => {
+      root.render(
+        <TabTree
+          snapshot={twoWindowSnapshot}
+          query=""
+          filter="all"
+          windowScope="all"
+          workspaceTag=""
+          expandedWindows={new Set(["window:1", "window:2"])}
+          expandedWorkspaces={new Set(["ws-a", "ws-b", "ws-c"])}
+          selectedTabId={null}
+          onToggleWindow={vi.fn()}
+          onToggleWorkspace={vi.fn()}
+          onActivateTab={vi.fn()}
+          onMoveTab={vi.fn()}
+          onMoveWorkspace={onMoveWorkspace}
+          onEditWorkspace={vi.fn()}
+          onDeleteWorkspace={vi.fn()}
+          onCreateWorkspace={vi.fn()}
+        />
+      );
+    });
+
+    const headings = host.querySelectorAll<HTMLButtonElement>(".workspace-heading");
+    const sections = host.querySelectorAll<HTMLElement>(".workspace-section");
+    const sameWindow = new TestDataTransfer();
+    await act(async () => dispatchDrag(headings[0], "dragstart", sameWindow));
+    expect(sections[1].classList.contains("drop-zone-workspace")).toBe(true);
+    await act(async () => dispatchDrag(sections[1], "drop", sameWindow));
+    expect(onMoveWorkspace).toHaveBeenCalledWith("ws-a", "ws-b");
+
+    const crossWindow = new TestDataTransfer();
+    await act(async () => dispatchDrag(headings[0], "dragstart", crossWindow));
+    expect(sections[2].classList.contains("drop-zone-workspace")).toBe(false);
+    await act(async () => dispatchDrag(sections[2], "drop", crossWindow));
+    expect(onMoveWorkspace).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+  });
+
+  it("keeps empty tab-type sections visible as stable structural drop targets", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const compactSnapshot: TabFridgeSnapshot = {
+      ...snapshot,
+      workspaces: [snapshot.workspaces[0]],
+      tabs: [snapshot.tabs[0]]
+    };
+
+    await act(async () => {
+      root.render(
+        <TabTree
+          snapshot={compactSnapshot}
+          query=""
+          filter="all"
+          windowScope="all"
+          workspaceTag=""
+          expandedWindows={new Set(["window:1"])}
+          expandedWorkspaces={new Set(["ws-a"])}
+          selectedTabId={null}
+          onToggleWindow={vi.fn()}
+          onToggleWorkspace={vi.fn()}
+          onActivateTab={vi.fn()}
+          onMoveTab={vi.fn()}
+          onMoveWorkspace={vi.fn()}
+          onEditWorkspace={vi.fn()}
+          onDeleteWorkspace={vi.fn()}
+          onCreateWorkspace={vi.fn()}
+        />
+      );
+    });
+
+    expect(host.textContent).toContain("未分类");
+    expect(host.textContent).toContain("特殊页面");
+    expect(host.textContent).toContain("固定标签");
+    expect(host.querySelector(".unclassified-section")).not.toBeNull();
+    expect(host.querySelector(".section-heading-special")).not.toBeNull();
+    expect(host.querySelector(".section-heading-fixed")).not.toBeNull();
+    expect(host.querySelector(".workspace-level")).toBeNull();
+    expect(host.querySelector(".workspace-menu")).not.toBeNull();
+
+    const source = host.querySelector<HTMLButtonElement>("button.tab-row");
+    const transfer = new TestDataTransfer();
+    await act(async () => dispatchDrag(source!, "dragstart", transfer));
+    expect(host.querySelector(".unclassified-section.drop-zone-tab")).not.toBeNull();
+    await act(async () => root.unmount());
+  });
+
+  it("shows the most recent tab access time in the selected language", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-24T00:00:00.000Z"));
+    await setAppLanguage("zh-CN");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const recentSnapshot: TabFridgeSnapshot = {
+      ...snapshot,
+      tabs: snapshot.tabs.map((item, index) => index === 0
+        ? { ...item, lastActivatedAt: Date.now() - 5 * 60_000 }
+        : item)
+    };
+    const props = {
+      snapshot: recentSnapshot,
+      query: "",
+      filter: "all" as const,
+      windowScope: "all" as const,
+      workspaceTag: "",
+      expandedWindows: new Set(["window:1"]),
+      expandedWorkspaces: new Set(["ws-a", "ws-b"]),
+      selectedTabId: null,
+      onToggleWindow: vi.fn(),
+      onToggleWorkspace: vi.fn(),
+      onActivateTab: vi.fn(),
+      onMoveTab: vi.fn(),
+      onMoveWorkspace: vi.fn(),
+      onEditWorkspace: vi.fn(),
+      onDeleteWorkspace: vi.fn(),
+      onCreateWorkspace: vi.fn()
+    };
+
+    await act(async () => root.render(<TabTree {...props} />));
+    expect(host.textContent).toContain("5 分钟前");
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(host.textContent).toContain("6 分钟前");
+    await act(async () => { await setAppLanguage("en"); });
+    expect(host.textContent).toContain("6 minutes ago");
+    expect(host.querySelector("button.tab-row")?.getAttribute("title")).toContain("Last visited: 6 minutes ago");
     await act(async () => root.unmount());
   });
 });

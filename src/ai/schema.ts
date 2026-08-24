@@ -6,8 +6,13 @@ import {
   type OrganizationPreview
 } from "../shared/contracts";
 import { AIInvalidJsonError, AIValidationError } from "./errors";
+import { getAppLanguage, translate } from "../i18n";
 
 const idSchema = z.string().min(1);
+
+function tr(key: Parameters<typeof translate>[1], variables?: Record<string, string | number | undefined>): string {
+  return translate(getAppLanguage(), key, variables);
+}
 
 /** Strict response shape accepted from an AI provider for one batch. */
 export const organizationGroupResponseSchema = z
@@ -31,24 +36,15 @@ export const organizationResponseSchema = z
 export type OrganizationGroupResponse = z.infer<typeof organizationGroupResponseSchema>;
 export type OrganizationResponse = z.infer<typeof organizationResponseSchema>;
 
-function issueMessage(issues: readonly { path?: PropertyKey[]; message?: string }[]): string {
-  return issues
-    .map((issue) => {
-      const path = issue.path?.length ? issue.path.join(".") : "response";
-      return `${path}: ${issue.message ?? "invalid value"}`;
-    })
-    .join("; ");
-}
-
 /** Parse JSON without accepting Markdown fences, comments, or trailing text. */
 export function parseStrictJson(value: unknown): unknown {
   if (typeof value !== "string") {
-    throw new AIInvalidJsonError("AI response content must be a JSON string");
+    throw new AIInvalidJsonError(tr("ai.responseStringRequired"));
   }
   try {
     return JSON.parse(value);
   } catch (error) {
-    throw new AIInvalidJsonError("AI response was not valid JSON", error);
+    throw new AIInvalidJsonError(tr("ai.invalidJson"), error);
   }
 }
 
@@ -60,7 +56,7 @@ export function parseAndValidateOrganizationResponse(
   const parsed = organizationResponseSchema.safeParse(json);
   if (!parsed.success) {
     throw new AIValidationError(
-      `AI response failed schema validation: ${issueMessage(parsed.error.issues)}`,
+      tr("ai.schemaFailed"),
       parsed.error.issues
     );
   }
@@ -69,33 +65,33 @@ export function parseAndValidateOrganizationResponse(
   const sourceSet = new Set(source);
   const issues: string[] = [];
   if (source.some((id, index) => source.indexOf(id) !== index)) {
-    issues.push("source tab IDs contain duplicates");
+    issues.push(tr("ai.sourceIdsDuplicate"));
   }
 
   const seenTabIds = new Set<string>();
   const seenGroupIds = new Set<string>();
   for (const [groupIndex, group] of parsed.data.groups.entries()) {
-    if (seenGroupIds.has(group.id)) issues.push(`groups.${groupIndex}.id is duplicated`);
+    if (seenGroupIds.has(group.id)) issues.push(tr("ai.groupIdDuplicate", { index: groupIndex + 1 }));
     seenGroupIds.add(group.id);
     for (const tabId of group.tabIds) {
-      if (!sourceSet.has(tabId)) issues.push(`groups.${groupIndex}.tabIds contains unknown tab ${tabId}`);
-      if (seenTabIds.has(tabId)) issues.push(`tab ${tabId} is assigned more than once`);
+      if (!sourceSet.has(tabId)) issues.push(tr("ai.unknownTab", { id: tabId }));
+      if (seenTabIds.has(tabId)) issues.push(tr("ai.tabAssignedTwice", { id: tabId }));
       seenTabIds.add(tabId);
     }
   }
 
   for (const [index, tabId] of parsed.data.unclassifiedTabIds.entries()) {
-    if (!sourceSet.has(tabId)) issues.push(`unclassifiedTabIds.${index} contains unknown tab ${tabId}`);
-    if (seenTabIds.has(tabId)) issues.push(`tab ${tabId} is assigned more than once`);
+    if (!sourceSet.has(tabId)) issues.push(tr("ai.unknownTab", { id: tabId, index: index + 1 }));
+    if (seenTabIds.has(tabId)) issues.push(tr("ai.tabAssignedTwice", { id: tabId }));
     seenTabIds.add(tabId);
   }
 
   for (const tabId of sourceSet) {
-    if (!seenTabIds.has(tabId)) issues.push(`tab ${tabId} is missing from the AI response`);
+    if (!seenTabIds.has(tabId)) issues.push(tr("ai.tabMissing", { id: tabId }));
   }
 
   if (issues.length) {
-    throw new AIValidationError(`AI response was rejected in full: ${issues.join("; ")}`, issues);
+    throw new AIValidationError(tr("ai.responseRejected", { details: issues.join("; ") }), issues);
   }
   return parsed.data;
 }
@@ -113,7 +109,7 @@ export function validateOrganizationPreview(
 ): OrganizationPreview {
   const modeResult = organizationModeSchema.safeParse(mode);
   if (!modeResult.success) {
-    throw new AIValidationError("Unsupported organization mode", modeResult.error.issues);
+    throw new AIValidationError(tr("ai.unsupportedMode"), modeResult.error.issues);
   }
   const response = parseAndValidateOrganizationResponse(value, sourceTabIds);
   const previewCandidate = {
@@ -126,7 +122,7 @@ export function validateOrganizationPreview(
   const result = organizationPreviewSchema.safeParse(previewCandidate);
   if (!result.success) {
     throw new AIValidationError(
-      `Organization preview failed contract validation: ${issueMessage(result.error.issues)}`,
+      tr("ai.previewContractFailed"),
       result.error.issues
     );
   }

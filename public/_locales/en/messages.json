@@ -1,0 +1,5 @@
+{
+  "extensionName": { "message": "Tab Fridge" },
+  "extensionDescription": { "message": "Local-first browser workspaces for organizing tabs safely." },
+  "actionTitle": { "message": "Open or close Tab Fridge" }
+}

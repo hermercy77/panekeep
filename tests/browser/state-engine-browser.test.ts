@@ -4,6 +4,8 @@ import type { BrowserLike } from "../../src/browser/api";
 import { MemoryStateRepository } from "../../src/storage/repository";
 import { fingerprintTabs } from "../../src/ai";
 import { AI_CONFIG_STORAGE_KEY } from "../../src/ai/config";
+import { createBackup } from "../../src/shared/backup";
+import { setAppLanguage } from "../../src/i18n";
 
 type NativeTab = {
   id: number;
@@ -36,8 +38,12 @@ class FakeBrowser {
   readonly removedWindowIds: number[] = [];
   readonly tabUpdates: Array<{ tabId: number; changes: Record<string, unknown> }> = [];
   readonly groupUpdates: Array<{ groupId: number; changes: Record<string, unknown> }> = [];
+  readonly discardedTabIds: number[] = [];
+  readonly failCreateUrls = new Set<string>();
   readonly api: BrowserLike;
   private nextGroupId = 100;
+  private nextTabId = 1000;
+  private nextWindowId = 100;
 
   constructor(readonly windows: NativeWindow[], readonly groups: NativeGroup[]) {
     const reindex = (window: NativeWindow) => window.tabs.forEach((tab, index) => {
@@ -65,11 +71,29 @@ class FakeBrowser {
         getAll: async () => this.windows.map((window) => ({ ...window, tabs: window.tabs.map((tab) => ({ ...tab })) })),
         getLastFocused: async () => ({ ...this.windows.find((window) => window.focused) ?? this.windows[0] }),
         getCurrent: async () => ({ ...this.windows.find((window) => window.focused) ?? this.windows[0] }),
+        create: async ({ url, focused = false }: { url?: string | string[]; focused?: boolean }) => {
+          const windowId = this.nextWindowId++;
+          const urls = Array.isArray(url) ? url : [url ?? "about:blank"];
+          const createdWindow: NativeWindow = {
+            id: windowId,
+            type: "normal",
+            focused,
+            tabs: urls.map((tabUrl, index) => tab(this.nextTabId++, windowId, {
+              url: tabUrl,
+              title: tabUrl,
+              index,
+              active: index === 0
+            }))
+          };
+          if (focused) this.windows.forEach((window) => { window.focused = false; });
+          this.windows.push(createdWindow);
+          return { ...createdWindow, tabs: createdWindow.tabs.map((item) => ({ ...item })) };
+        },
         remove: async (windowId: number) => {
           const index = this.windows.findIndex((window) => window.id === windowId);
           if (index < 0) throw new Error(`Unknown fake window ${windowId}`);
-          if (this.windows[index].tabs.length > 0) throw new Error("Cannot remove a non-empty fake window");
           this.windows.splice(index, 1);
+          cleanupGroups();
           this.removedWindowIds.push(windowId);
         },
         update: async () => undefined,
@@ -80,6 +104,31 @@ class FakeBrowser {
       tabs: {
         query: async ({ windowId }: { windowId: number }) =>
           (this.windows.find((window) => window.id === windowId)?.tabs ?? []).map((tab) => ({ ...tab })),
+        create: async ({ windowId, url, active = false }: { windowId: number; url: string; active?: boolean }) => {
+          if (this.failCreateUrls.has(url)) throw new Error(`Blocked fake URL ${url}`);
+          const window = this.windows.find((item) => item.id === windowId);
+          if (!window) throw new Error(`Unknown fake window ${windowId}`);
+          if (active) window.tabs.forEach((item) => { item.active = false; });
+          const created = tab(this.nextTabId++, windowId, {
+            url,
+            title: url,
+            index: window.tabs.length,
+            active
+          });
+          window.tabs.push(created);
+          return { ...created };
+        },
+        remove: async (tabId: number) => {
+          const found = findTab(tabId);
+          found.window.tabs.splice(found.window.tabs.indexOf(found.tab), 1);
+          reindex(found.window);
+          cleanupGroups();
+        },
+        discard: async (tabId: number) => {
+          findTab(tabId);
+          this.discardedTabIds.push(tabId);
+          return { ...findTab(tabId).tab };
+        },
         move: async (tabId: number, { windowId }: { windowId: number }) => {
           const source = findTab(tabId);
           const target = this.windows.find((window) => window.id === windowId);
@@ -125,8 +174,8 @@ class FakeBrowser {
         onActivated: event()
       },
       tabGroups: {
-        query: async ({ windowId }: { windowId: number }) =>
-          this.groups.filter((group) => group.windowId === windowId).map((group) => ({ ...group })),
+        query: async ({ windowId }: { windowId?: number } = {}) =>
+          this.groups.filter((group) => windowId === undefined || group.windowId === windowId).map((group) => ({ ...group })),
         update: async (groupId: number, changes: Record<string, unknown>) => {
           const group = this.groups.find((item) => item.id === groupId);
           if (!group) throw new Error(`Unknown fake group ${groupId}`);
@@ -219,6 +268,81 @@ describe("BrowserStateEngine with Chromium state", () => {
     await engine.stop();
   });
 
+  it("does not reuse a closed window identity when only one native window was replaced", async () => {
+    const repository = new MemoryStateRepository({
+      windows: [
+        { key: "stable-window", nativeId: 1, name: "Stable", order: 0, isCurrent: true, expanded: true },
+        { key: "closed-window", nativeId: 2, name: "Closed project", order: 1, isCurrent: false, expanded: true }
+      ],
+      workspaces: [],
+      tabs: []
+    });
+    const fake = new FakeBrowser([
+      { id: 1, type: "normal", focused: true, tabs: [tab(101, 1, { active: true })] },
+      { id: 3, type: "normal", focused: false, tabs: [tab(301, 3, { active: true })] }
+    ], []);
+    const engine = new BrowserStateEngine({ api: fake.api, repository, debounceMs: 0 });
+    await engine.start();
+
+    expect(engine.getState().windows.find((window) => window.nativeId === 1)).toMatchObject({ key: "stable-window", name: "Stable" });
+    expect(engine.getState().windows.find((window) => window.nativeId === 3)).toMatchObject({ key: "window:3", name: "Window 2" });
+    expect(engine.getState().windows.some((window) => window.key === "closed-window")).toBe(false);
+    await engine.stop();
+  });
+
+  it("preserves window identities by order after a full browser restart", async () => {
+    const repository = new MemoryStateRepository({
+      windows: [
+        { key: "first-window", nativeId: 1, name: "First", order: 0, isCurrent: true, expanded: true },
+        { key: "second-window", nativeId: 2, name: "Second", order: 1, isCurrent: false, expanded: true }
+      ],
+      workspaces: [],
+      tabs: []
+    });
+    const fake = new FakeBrowser([
+      { id: 3, type: "normal", focused: true, tabs: [tab(301, 3, { active: true })] },
+      { id: 4, type: "normal", focused: false, tabs: [tab(401, 4, { active: true })] }
+    ], []);
+    const engine = new BrowserStateEngine({ api: fake.api, repository, debounceMs: 0 });
+    await engine.start();
+
+    expect(engine.getState().windows.map((window) => ({ key: window.key, nativeId: window.nativeId, name: window.name }))).toEqual([
+      { key: "first-window", nativeId: 3, name: "First" },
+      { key: "second-window", nativeId: 4, name: "Second" }
+    ]);
+    await engine.stop();
+  });
+
+  it("recovers the latest tab activation time after a service-worker restart", async () => {
+    const fake = new FakeBrowser([
+      {
+        id: 1,
+        type: "normal",
+        focused: true,
+        tabs: [
+          tab(101, 1, { active: true }),
+          tab(102, 1, { index: 1, active: false })
+        ]
+      }
+    ], []);
+    const repository = new MemoryStateRepository();
+    let now = 100;
+    const first = new BrowserStateEngine({ api: fake.api, repository, debounceMs: 0, now: () => now });
+    await first.start();
+    expect(first.getState().tabs.find((item) => item.id === "101")).toMatchObject({ active: true, lastActivatedAt: 100 });
+    await first.stop();
+
+    fake.windows[0].tabs[0].active = false;
+    fake.windows[0].tabs[1].active = true;
+    now = 200;
+    const restarted = new BrowserStateEngine({ api: fake.api, repository, debounceMs: 0, now: () => now });
+    await restarted.start();
+
+    expect(restarted.getState().tabs.find((item) => item.id === "101")).toMatchObject({ active: false, lastActivatedAt: 100 });
+    expect(restarted.getState().tabs.find((item) => item.id === "102")).toMatchObject({ active: true, lastActivatedAt: 200 });
+    await restarted.stop();
+  });
+
   it("synchronizes workspace name and semantic color to the native group", async () => {
     const fake = new FakeBrowser([
       { id: 1, type: "normal", focused: true, tabs: [tab(101, 1, { groupId: 10, active: true })] }
@@ -237,6 +361,36 @@ describe("BrowserStateEngine with Chromium state", () => {
     await engine.stop();
   });
 
+  it("synchronizes workspace order from the native tab-group position", async () => {
+    const fake = new FakeBrowser([
+      {
+        id: 1,
+        type: "normal",
+        focused: true,
+        tabs: [
+          tab(101, 1, { groupId: 10, active: true, index: 0 }),
+          tab(102, 1, { groupId: 11, index: 1 })
+        ]
+      }
+    ], [
+      { id: 10, windowId: 1, title: "First", color: "blue" },
+      { id: 11, windowId: 1, title: "Second", color: "green" }
+    ]);
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+    expect(engine.getState().workspaces.map((workspace) => workspace.groupId)).toEqual([10, 11]);
+
+    fake.windows[0].tabs = [
+      { ...fake.windows[0].tabs[1], index: 0 },
+      { ...fake.windows[0].tabs[0], index: 1 }
+    ];
+    await engine.syncFromBrowser();
+
+    expect(engine.getState().workspaces.map((workspace) => workspace.groupId)).toEqual([11, 10]);
+    expect(engine.getState().workspaces.map((workspace) => workspace.order)).toEqual([0, 1]);
+    await engine.stop();
+  });
+
   it("deletes a workspace by ungrouping its tabs without closing them", async () => {
     const fake = new FakeBrowser([
       { id: 1, type: "normal", focused: true, tabs: [tab(101, 1, { groupId: 10, active: true })] }
@@ -250,6 +404,170 @@ describe("BrowserStateEngine with Chromium state", () => {
     expect(fake.windows[0].tabs[0].groupId).toBe(-1);
     expect(engine.getState().workspaces).toEqual([]);
     expect(engine.getState().tabs[0]).toMatchObject({ id: "101", workspaceId: null, kind: "normal" });
+    await engine.stop();
+  });
+
+  it("imports the rest of a backup when a special page is blocked and reports the skipped page", async () => {
+    await setAppLanguage("en");
+    const fake = new FakeBrowser([
+      {
+        id: 1,
+        type: "normal",
+        focused: true,
+        tabs: [
+          tab(101, 1, { groupId: 10, active: true }),
+          tab(102, 1, { groupId: 11, index: 1 })
+        ]
+      }
+    ], [
+      { id: 10, windowId: 1, title: "Project", color: "blue" },
+      { id: 11, windowId: 1, title: "Project (copy)", color: "green" }
+    ]);
+    fake.failCreateUrls.add("chrome://blocked/");
+    const backup = createBackup({
+      windows: [{ key: "backup-window", nativeId: 90, name: "Imported window", order: 0, isCurrent: false, expanded: true }],
+      workspaces: [{
+        id: "backup-workspace",
+        windowKey: "backup-window",
+        name: "Project",
+        description: "Restored project",
+        tags: ["restored"],
+        color: "purple",
+        groupId: 90,
+        order: 0,
+        createdAt: 1,
+        updatedAt: 1
+      }],
+      tabs: [
+        { id: "backup-tab-1", windowKey: "backup-window", workspaceId: "backup-workspace", kind: "normal", url: "https://example.test/one", title: "One", index: 0, pinned: false, groupId: 90 },
+        { id: "backup-tab-2", windowKey: "backup-window", workspaceId: "backup-workspace", kind: "normal", url: "https://example.test/two", title: "Two", index: 1, pinned: false, groupId: 90 },
+        { id: "backup-special", windowKey: "backup-window", workspaceId: null, kind: "special", url: "chrome://blocked/", title: "Blocked page", index: 2, pinned: false, specialReason: "Browser page" }
+      ]
+    }, "chrome", "2026-08-24T00:00:00.000Z");
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+
+    try {
+      await engine.start();
+      const result = await engine.importBackup(backup);
+
+      expect(result.skippedTabs).toEqual([{
+        id: "backup-special",
+        title: "Blocked page",
+        url: "chrome://blocked/",
+        reason: "browser_blocked"
+      }]);
+      expect(fake.windows).toHaveLength(2);
+      const importedWindow = fake.windows.find((window) => window.id !== 1);
+      expect(importedWindow?.tabs.map((item) => item.url)).toEqual([
+        "https://example.test/one",
+        "https://example.test/two"
+      ]);
+      expect(fake.discardedTabIds).toContain(importedWindow?.tabs[1].id);
+      expect(engine.getState().workspaces.find((workspace) => workspace.windowKey !== "window:1")).toMatchObject({
+        name: "Project (1)",
+        description: "Restored project",
+        tags: ["restored"],
+        color: "purple"
+      });
+    } finally {
+      await engine.stop();
+      await setAppLanguage("zh-CN");
+    }
+  });
+
+  it("attempts to restore a supported special page and removes the blank placeholder", async () => {
+    const fake = new FakeBrowser([
+      { id: 1, type: "normal", focused: true, tabs: [tab(101, 1, { active: true })] }
+    ], []);
+    const backup = createBackup({
+      windows: [{ key: "special-window", nativeId: 91, name: "Special pages", order: 0, isCurrent: false, expanded: true }],
+      workspaces: [],
+      tabs: [{
+        id: "special-tab",
+        windowKey: "special-window",
+        workspaceId: null,
+        kind: "special",
+        url: "chrome://settings/",
+        title: "Settings",
+        index: 0,
+        pinned: false,
+        specialReason: "Browser page"
+      }]
+    }, "chrome", "2026-08-24T00:00:00.000Z");
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+
+    const result = await engine.importBackup(backup);
+
+    const importedWindow = fake.windows.find((window) => window.id !== 1);
+    expect(result.skippedTabs).toEqual([]);
+    expect(importedWindow?.tabs.map((item) => item.url)).toEqual(["chrome://settings/"]);
+    expect(fake.discardedTabIds).toContain(importedWindow?.tabs[0].id);
+    expect(engine.getState().tabs.find((item) => item.windowKey !== "window:1")).toMatchObject({
+      kind: "special",
+      url: "chrome://settings/"
+    });
+    await engine.stop();
+  });
+
+  it("removes every created window and restores local state when backup grouping fails", async () => {
+    const fake = new FakeBrowser([
+      { id: 1, type: "normal", focused: true, tabs: [tab(101, 1, { active: true })] }
+    ], []);
+    const backup = createBackup({
+      windows: [{ key: "backup-window", nativeId: 90, name: "Imported", order: 0, isCurrent: false, expanded: true }],
+      workspaces: [{ id: "backup-workspace", windowKey: "backup-window", name: "Imported", description: "", tags: [], color: "blue", groupId: 90, order: 0, createdAt: 1, updatedAt: 1 }],
+      tabs: [{ id: "backup-tab", windowKey: "backup-window", workspaceId: "backup-workspace", kind: "normal", url: "https://example.test/imported", title: "Imported", index: 0, pinned: false, groupId: 90 }]
+    }, "chrome", "2026-08-24T00:00:00.000Z");
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+    const before = engine.getState();
+    fake.api.tabs.group = async () => { throw new Error("group failed"); };
+
+    await expect(engine.importBackup(backup)).rejects.toThrow("group failed");
+
+    expect(fake.windows.map((window) => window.id)).toEqual([1]);
+    expect(fake.removedWindowIds).toEqual([100]);
+    expect(engine.getState()).toEqual(before);
+    await engine.stop();
+  });
+
+  it("rolls back the whole AI apply when a later native tab move fails", async () => {
+    const fake = new FakeBrowser([
+      { id: 1, type: "normal", focused: true, tabs: [tab(101, 1, { active: true })] },
+      { id: 2, type: "normal", focused: false, tabs: [tab(201, 2, { active: true })] }
+    ], []);
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+    const before = engine.getState();
+    const originalMove = fake.api.tabs.move;
+    fake.api.tabs.move = async (tabId: number, options: { windowId: number; index: number }) => {
+      if (tabId === 201) throw new Error("second move failed");
+      return originalMove(tabId, options);
+    };
+    const sourceTabs = before.tabs.filter((item) => item.id === "101" || item.id === "201");
+    const preview = {
+      mode: "purpose" as const,
+      sourceTabIds: ["101", "201"],
+      sourceFingerprint: fingerprintTabs(sourceTabs),
+      groups: [{
+        id: "combined",
+        name: "Combined project",
+        description: "",
+        tags: [],
+        existingWorkspaceId: null,
+        tabIds: ["101", "201"]
+      }],
+      unclassifiedTabIds: []
+    };
+
+    await expect(engine.handleUiAction({ action: "organization.apply", payload: { preview, targetWindowKey: "window:1" } }))
+      .rejects.toThrow("second move failed");
+
+    expect(engine.getState()).toEqual(before);
+    expect(fake.windows.find((window) => window.id === 1)?.tabs.map((item) => item.id)).toEqual([101]);
+    expect(fake.windows.find((window) => window.id === 2)?.tabs.map((item) => item.id)).toEqual([201]);
+    expect(fake.groups).toEqual([]);
     await engine.stop();
   });
 

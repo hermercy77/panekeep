@@ -1,5 +1,6 @@
 import { aiConfigSchema, type AIConfig } from "../shared/contracts";
 import { AIConfigError } from "./errors";
+import { getAppLanguage, translate, type AppLanguage } from "../i18n";
 
 export const DEFAULT_AI_CONFIG: AIConfig = {
   baseUrl: "https://api.openai.com/v1",
@@ -15,13 +16,17 @@ export interface ModelAvailabilityNotice {
   message: string;
 }
 
-export function describeModelAvailability(model: string, models: readonly string[]): ModelAvailabilityNotice {
+export function describeModelAvailability(
+  model: string,
+  models: readonly string[],
+  language: AppLanguage = getAppLanguage()
+): ModelAvailabilityNotice {
   const available = [...new Set(models.filter(Boolean))];
-  if (!available.length) return { tone: "success", message: "连接成功，服务未返回模型列表" };
-  if (available.includes(model)) return { tone: "success", message: `连接成功，可用模型 ${available.length} 个` };
+  if (!available.length) return { tone: "success", message: translate(language, "ai.connectionNoModels") };
+  if (available.includes(model)) return { tone: "success", message: translate(language, "ai.connectionModels", { count: available.length }) };
   return {
     tone: "error",
-    message: `连接成功，但模型「${model}」不可用。可用模型：${available.join("、")}`
+    message: translate(language, "ai.modelUnavailable", { model, models: available.join(language === "zh-CN" ? "、" : ", ") })
   };
 }
 
@@ -71,7 +76,7 @@ export function normalizeAIConfig(config: Partial<AIConfig> = {}): AIConfig {
       model: parsed.model
     };
   } catch (error) {
-    throw new AIConfigError("Invalid AI configuration", error);
+    throw new AIConfigError(translate(getAppLanguage(), "ai.invalidConfig"), error);
   }
 }
 

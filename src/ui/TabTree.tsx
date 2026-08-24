@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { AppWindow, ChevronDown, ChevronRight, GripVertical, Inbox, Pencil, Pin, Plus, Rows3, ShieldAlert, Trash2 } from "lucide-react";
+import { AppWindow, ChevronDown, ChevronRight, GripVertical, Inbox, MoreHorizontal, Pencil, Pin, Plus, Rows3, ShieldAlert, Trash2 } from "lucide-react";
 import type { TabRecord, WindowState, Workspace } from "../shared/contracts";
 import { tabHost, tabLabel } from "../ui-state/model";
 import type { TabFridgeSnapshot } from "../ui-state/model";
 import { workspaceColorClass } from "./workspaceColors";
+import { useI18n } from "../i18n/react";
 
 export type TabFilter = "all" | "unclassified";
 export type WindowScope = "all" | "current";
@@ -64,8 +65,9 @@ function workspaceTagMatches(workspace: Workspace, workspaceTag: string): boolea
   return !workspaceTag || workspace.tags.includes(workspaceTag);
 }
 
-function windowLabel(window: WindowState, index: number): string {
-  return window.name.trim() || `窗口 ${index + 1}`;
+function windowLabel(window: WindowState, fallback: string): string {
+  const name = window.name.trim();
+  return !name || /^(?:Window|\u7a97\u53e3) \d+$/.test(name) ? fallback : name;
 }
 
 function sortWorkspaces(workspaces: Workspace[]): Workspace[] {
@@ -85,6 +87,7 @@ function Favicon({ tab }: { tab: TabRecord }) {
 
 function TabRow({
   tab,
+  now,
   selected,
   dragging,
   onActivate,
@@ -92,13 +95,28 @@ function TabRow({
   onDragEnd
 }: {
   tab: TabRecord;
+  now: number;
   selected: boolean;
   dragging: boolean;
   onActivate: () => void;
   onDragStart: (event: DragEvent) => void;
   onDragEnd: (event: DragEvent) => void;
 }) {
+  const { language, t } = useI18n();
   const canDrag = tab.kind !== "special";
+  const lastVisited = (() => {
+    if (tab.lastActivatedAt === undefined) return null;
+    const elapsed = Math.max(0, now - tab.lastActivatedAt);
+    const minutes = Math.floor(elapsed / 60_000);
+    if (minutes < 1) return t("tab.visitedJustNow");
+    if (minutes < 60) return t("tab.visitedMinutes", { count: minutes });
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return t("tab.visitedHours", { count: hours });
+    const days = Math.floor(hours / 24);
+    if (days < 7) return t("tab.visitedDays", { count: days });
+    return new Intl.DateTimeFormat(language, { year: "numeric", month: "short", day: "numeric" }).format(tab.lastActivatedAt);
+  })();
+  const lastVisitedLabel = lastVisited ? t("tab.lastVisited", { time: lastVisited }) : null;
   return (
     <button
       className={`tab-row${selected ? " selected" : ""}${dragging ? " dragging-source" : ""}`}
@@ -107,15 +125,14 @@ function TabRow({
       onDragStart={canDrag ? onDragStart : undefined}
       onDragEnd={canDrag ? onDragEnd : undefined}
       onClick={onActivate}
-      title={`${tabLabel(tab)}\n${tab.url}`}
+      title={[tabLabel(tab), tab.url, tab.specialReason, lastVisitedLabel].filter(Boolean).join("\n")}
     >
       <Favicon tab={tab} />
       <span className="tab-copy">
         <span className="tab-title">{tabLabel(tab)}</span>
         <span className="tab-host">{tabHost(tab)}</span>
+        {lastVisited ? <span className="tab-last-visited">{lastVisited}</span> : null}
       </span>
-      {tab.pinned ? <span className="tab-marker" title="已固定"><Pin aria-hidden="true" size={12} /></span> : null}
-      {tab.specialReason ? <span className="tab-marker special-marker" title={tab.specialReason}><ShieldAlert aria-hidden="true" size={12} /></span> : null}
     </button>
   );
 }
@@ -152,11 +169,12 @@ function SectionHeading({
 }
 
 function EmptyTree({ query, filter }: { query: string; filter: TabFilter }) {
+  const { t } = useI18n();
   return (
     <div className="empty-state tree-empty">
       <div className="empty-illustration"><Rows3 aria-hidden="true" size={22} /></div>
-      <strong>{query ? "没有匹配的标签" : filter === "unclassified" ? "未分类为空" : "当前窗口还没有标签"}</strong>
-      <span>{query ? "换个关键词试试，支持标题和网址搜索。" : "打开网页后，标签会自动出现在这里。"}</span>
+      <strong>{query ? t("tree.noMatches") : filter === "unclassified" ? t("tree.unclassifiedEmpty") : t("tree.currentWindowEmpty")}</strong>
+      <span>{query ? t("tree.searchHint") : t("tree.emptyHint")}</span>
     </div>
   );
 }
@@ -179,11 +197,17 @@ export function TabTree({
   onDeleteWorkspace,
   onCreateWorkspace
 }: TabTreeProps) {
+  const { t } = useI18n();
+  const [timeNow, setTimeNow] = useState(() => Date.now());
   const [collapsedTabSections, setCollapsedTabSections] = useState<Set<string>>(new Set());
   const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
   const [activeDropTarget, setActiveDropTarget] = useState<string | null>(null);
   const activeDropTargetRef = useRef<string | null>(null);
   const workspaceExpandTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    const timer = window.setInterval(() => setTimeNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const windows = useMemo(() => {
     if (snapshot.windows.length) return snapshot.windows;
     const keys = [...new Set(snapshot.tabs.map((tab) => tab.windowKey))];
@@ -254,14 +278,15 @@ export function TabTree({
   };
 
   const draggedTab = dragPayload?.type === "tab" ? snapshot.tabs.find((tab) => tab.id === dragPayload.id) : undefined;
+  const draggedWorkspace = dragPayload?.type === "workspace" ? snapshot.workspaces.find((workspace) => workspace.id === dragPayload.id) : undefined;
   const canMoveDraggedTab = dragPayload?.type === "tab" && draggedTab !== undefined && draggedTab.kind !== "special";
   const canMoveDraggedTabToUnclassified = canMoveDraggedTab && draggedTab.workspaceId !== null;
-  const tabDropGuidance = draggedTab?.pinned ? "取消固定并移入" : "松开移入";
+  const tabDropGuidance = draggedTab?.pinned ? t("tree.unpinAndMove") : t("tree.dropToMove");
 
   return (
-    <div className={`tree${dragPayload ? ` dragging-${dragPayload.type}` : ""}`} aria-label="标签树">
+    <div className={`tree${dragPayload ? ` dragging-${dragPayload.type}` : ""}`} aria-label={t("tree.label")}>
       <span className="sr-only" aria-live="polite">
-        {dragPayload?.type === "tab" ? "正在移动标签，可放入其他工作区或未分类" : dragPayload?.type === "workspace" ? "正在调整工作区顺序" : ""}
+        {dragPayload?.type === "tab" ? t("tree.movingTab") : dragPayload?.type === "workspace" ? t("tree.movingWorkspace") : ""}
       </span>
       {!windows.length || (!visibleTabCount && !visibleWorkspaceCount) ? <EmptyTree query={query} filter={filter} /> : null}
       {windows.filter((window) => windowScope === "all" || window.isCurrent).map((window, windowIndex) => {
@@ -279,13 +304,16 @@ export function TabTree({
         const specialExpanded = sectionExpanded(window.key, "special");
         const fixedExpanded = sectionExpanded(window.key, "fixed");
         const canDropIntoWindowUnclassified = canMoveDraggedTabToUnclassified && draggedTab.windowKey === window.key;
+        const showUnclassified = true;
+        const showSpecial = true;
+        const showFixed = true;
         return (
           <section className={window.isCurrent ? "window-section current" : "window-section"} data-level="window" key={window.key}>
             <button className="window-heading" type="button" onClick={() => onToggleWindow(window.key)} aria-expanded={isExpanded}>
               <span className="tree-chevron">{isExpanded ? <ChevronDown aria-hidden="true" size={15} /> : <ChevronRight aria-hidden="true" size={15} />}</span>
               <span className="window-icon"><AppWindow aria-hidden="true" size={14} /></span>
-              <span className="window-name">{windowLabel(window, windowIndex)}</span>
-              {window.isCurrent ? <span className="current-pill">当前</span> : null}
+              <span className="window-name">{windowLabel(window, t("common.windowName", { count: windowIndex + 1 }))}</span>
+              {window.isCurrent ? <span className="current-pill">{t("common.current")}</span> : null}
               <span className="window-count">{windowTabs.length}</span>
             </button>
             {isExpanded ? (
@@ -302,7 +330,9 @@ export function TabTree({
                   const workspaceExpanded = expandedWorkspaces.has(workspace.id);
                   const workspaceDropTarget = `workspace:${workspace.id}`;
                   const acceptsTab = canMoveDraggedTab && draggedTab.workspaceId !== workspace.id;
-                  const acceptsWorkspace = dragPayload?.type === "workspace" && dragPayload.id !== workspace.id;
+                  const acceptsWorkspace = dragPayload?.type === "workspace"
+                    && dragPayload.id !== workspace.id
+                    && draggedWorkspace?.windowKey === workspace.windowKey;
                   const acceptsDrop = acceptsTab || acceptsWorkspace;
                   return (
                     <div
@@ -343,18 +373,28 @@ export function TabTree({
                           <GripVertical className="drag-handle" aria-hidden="true" size={14} />
                           <span className="tree-chevron">{workspaceExpanded ? <ChevronDown aria-hidden="true" size={14} /> : <ChevronRight aria-hidden="true" size={14} />}</span>
                           <span className={`workspace-dot workspace-dot-${workspaceColorClass(workspace.color)}`} aria-hidden="true" />
-                          <span className="workspace-level">工作区</span>
                           <span className="workspace-name">{workspace.name}</span>
                           <span className="workspace-count">{workspaceTabs.length}</span>
                         </button>
-                        <div className="workspace-actions">
-                          <button className="mini-icon-button" type="button" onClick={() => onEditWorkspace(workspace)} aria-label={`编辑${workspace.name}`}>
-                            <Pencil aria-hidden="true" size={14} />
-                          </button>
-                          <button className="mini-icon-button danger" type="button" onClick={() => onDeleteWorkspace(workspace)} aria-label={`删除${workspace.name}`}>
-                            <Trash2 aria-hidden="true" size={14} />
-                          </button>
-                        </div>
+                        <details className="workspace-menu" onClick={(event) => event.stopPropagation()}>
+                          <summary className="mini-icon-button workspace-menu-trigger" aria-label={t("tree.moreActions", { name: workspace.name })} title={t("tree.moreActions", { name: workspace.name })}>
+                            <MoreHorizontal aria-hidden="true" size={15} />
+                          </summary>
+                          <div className="workspace-menu-list">
+                            <button type="button" onClick={(event) => {
+                              event.currentTarget.closest("details")?.removeAttribute("open");
+                              onEditWorkspace(workspace);
+                            }}>
+                              <Pencil aria-hidden="true" size={14} />{t("common.edit")}
+                            </button>
+                            <button className="danger" type="button" onClick={(event) => {
+                              event.currentTarget.closest("details")?.removeAttribute("open");
+                              onDeleteWorkspace(workspace);
+                            }}>
+                              <Trash2 aria-hidden="true" size={14} />{t("common.delete")}
+                            </button>
+                          </div>
+                        </details>
                         {workspace.description ? <span className="description-tooltip">{workspace.description}</span> : null}
                       </div>
                       <span className="drop-guidance" aria-hidden="true">{tabDropGuidance}</span>
@@ -362,10 +402,10 @@ export function TabTree({
                         <div className="workspace-tabs drop-target">
                           {workspaceTabs.length ? (
                             workspaceTabs.map((tab) => (
-                              <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} dragging={dragPayload?.type === "tab" && dragPayload.id === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
+                              <TabRow key={tab.id} tab={tab} now={timeNow} selected={selectedTabId === tab.id} dragging={dragPayload?.type === "tab" && dragPayload.id === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
                             ))
                           ) : (
-                            <div className="drop-placeholder">把标签拖到这里</div>
+                            <div className="drop-placeholder">{t("tree.dropHere")}</div>
                           )}
                         </div>
                       ) : null}
@@ -373,9 +413,9 @@ export function TabTree({
                   );
                 })}
                 <button className="create-workspace-link" type="button" onClick={() => onCreateWorkspace(window.key)}>
-                  <Plus aria-hidden="true" size={14} />新建工作区
+                  <Plus aria-hidden="true" size={14} />{t("common.newWorkspace")}
                 </button>
-                <div
+                {showUnclassified ? <div
                   className={`tree-section unclassified-section${canDropIntoWindowUnclassified ? " drop-zone-tab" : ""}${activeDropTarget === `unclassified:${window.key}` ? " drag-active" : ""}`}
                   onDragEnter={(event) => {
                     if (!canDropIntoWindowUnclassified) return;
@@ -397,43 +437,43 @@ export function TabTree({
                 >
                   <SectionHeading
                     icon={<Inbox aria-hidden="true" size={14} />}
-                    label="未分类"
+                    label={t("common.unclassified")}
                     count={unclassified.length}
                     kind="unclassified"
                     expanded={unclassifiedExpanded}
                     onToggle={() => toggleSection(window.key, "unclassified")}
                   />
-                  <span className="drop-guidance" aria-hidden="true">松开移回未分类</span>
+                  <span className="drop-guidance" aria-hidden="true">{t("tree.dropBackUnclassified")}</span>
                   {unclassifiedExpanded ? unclassified.map((tab) => (
-                    <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} dragging={dragPayload?.type === "tab" && dragPayload.id === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
+                    <TabRow key={tab.id} tab={tab} now={timeNow} selected={selectedTabId === tab.id} dragging={dragPayload?.type === "tab" && dragPayload.id === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
                   )) : null}
-                </div>
-                <div className="tree-section">
+                </div> : null}
+                {showSpecial ? <div className="tree-section">
                   <SectionHeading
                     icon={<ShieldAlert aria-hidden="true" size={14} />}
-                    label="特殊页面"
+                    label={t("common.specialPages")}
                     count={specialTabs.length}
                     kind="special"
                     expanded={specialExpanded}
                     onToggle={() => toggleSection(window.key, "special")}
                   />
                   {specialExpanded ? specialTabs.map((tab) => (
-                    <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} dragging={false} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
+                    <TabRow key={tab.id} tab={tab} now={timeNow} selected={selectedTabId === tab.id} dragging={false} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
                   )) : null}
-                </div>
-                <div className="tree-section">
+                </div> : null}
+                {showFixed ? <div className="tree-section">
                   <SectionHeading
                     icon={<Pin aria-hidden="true" size={14} />}
-                    label="固定标签"
+                    label={t("common.fixedTabs")}
                     count={fixedTabs.length}
                     kind="fixed"
                     expanded={fixedExpanded}
                     onToggle={() => toggleSection(window.key, "fixed")}
                   />
                   {fixedExpanded ? fixedTabs.map((tab) => (
-                    <TabRow key={tab.id} tab={tab} selected={selectedTabId === tab.id} dragging={dragPayload?.type === "tab" && dragPayload.id === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
+                    <TabRow key={tab.id} tab={tab} now={timeNow} selected={selectedTabId === tab.id} dragging={dragPayload?.type === "tab" && dragPayload.id === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
                   )) : null}
-                </div>
+                </div> : null}
               </div>
             ) : null}
           </section>

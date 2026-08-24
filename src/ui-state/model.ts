@@ -5,6 +5,8 @@ import type {
   WindowState,
   Workspace
 } from "../shared/contracts";
+import { getAppLanguage, translate } from "../i18n";
+import type { BackupImportResult } from "../shared/backup";
 
 /** The small, read-only view model consumed by both UI entrypoints. */
 export interface TabFridgeSnapshot {
@@ -33,7 +35,7 @@ export interface TabFridgeAdapter {
   requestOrganization(mode: OrganizationMode, tabIds?: string[]): Promise<OrganizationPreview>;
   applyOrganization(preview: OrganizationPreview): Promise<void>;
   exportBackup?: () => Promise<string>;
-  importBackup?: (json: string) => Promise<void>;
+  importBackup?: (json: string) => Promise<BackupImportResult>;
   subscribe?(listener: (snapshot: TabFridgeSnapshot) => void): () => void;
 }
 
@@ -76,7 +78,7 @@ export function workspaceForTab(tab: TabRecord, workspaces: Workspace[]): Worksp
 }
 
 export function tabLabel(tab: TabRecord): string {
-  return tab.title?.trim() || tab.url.replace(/^https?:\/\//, "").split("/")[0] || "未命名标签";
+  return tab.title?.trim() || tab.url.replace(/^https?:\/\//, "").split("/")[0] || translate(getAppLanguage(), "common.unnamedTab");
 }
 
 export function tabHost(tab: TabRecord): string {

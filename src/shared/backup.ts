@@ -1,10 +1,23 @@
 import { backupSchema, type Backup, type TabRecord, type WindowState, type Workspace } from "./contracts";
 import { BACKUP_SCHEMA_VERSION, TAB_FRIDGE_PRODUCT } from "./constants";
+import { getAppLanguage, translate } from "../i18n";
 
 export interface StateSnapshot {
   windows: WindowState[];
   workspaces: Workspace[];
   tabs: TabRecord[];
+}
+
+export interface BackupImportSkippedTab {
+  id: string;
+  title?: string;
+  url: string;
+  reason: "browser_blocked";
+}
+
+export interface BackupImportResult {
+  backup: Backup;
+  skippedTabs: BackupImportSkippedTab[];
 }
 
 export function createBackup(
@@ -33,13 +46,13 @@ export function parseBackup(value: unknown): Backup {
     try {
       candidate = JSON.parse(value) as unknown;
     } catch (error) {
-      throw new Error(`Invalid Tab Fridge backup JSON: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(translate(getAppLanguage(), "backup.invalidJson", { details: error instanceof Error ? error.message : String(error) }));
     }
   }
 
   const parsed = backupSchema.safeParse(candidate);
   if (!parsed.success) {
-    throw new Error(`Invalid Tab Fridge backup: ${parsed.error.message}`);
+    throw new Error(translate(getAppLanguage(), "backup.invalid", { details: parsed.error.message }));
   }
   return parsed.data;
 }
@@ -57,4 +70,3 @@ function getUserAgent(): string {
   if (typeof navigator === "undefined") return "";
   return navigator.userAgent;
 }
-

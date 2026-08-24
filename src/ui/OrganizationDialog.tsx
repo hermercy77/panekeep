@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, LayoutGrid, RefreshCw, ScanLine, Target, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import type { OrganizationMode, OrganizationPreview, TabRecord } from "../shared/contracts";
 import { tabLabel } from "../ui-state/model";
+import { useI18n } from "../i18n/react";
 
 interface OrganizationDialogProps {
   open: boolean;
@@ -30,6 +31,7 @@ export function OrganizationDialog({
   onConfirm,
   onClose
 }: OrganizationDialogProps) {
+  const { t } = useI18n();
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [selectedTabIds, setSelectedTabIds] = useState<Set<string>>(new Set());
   const [draftPreview, setDraftPreview] = useState<OrganizationPreview | null>(null);
@@ -37,6 +39,7 @@ export function OrganizationDialog({
   const tabById = new Map(tabs.map((tab) => [tab.id, tab]));
   const selectableTabs = tabs.filter((tab) => (tab.kind === "normal" || tab.kind === "fixed") && !tab.specialReason);
   const unclassifiedIds = selectableTabs.filter((tab) => tab.kind === "normal" && !tab.pinned && tab.workspaceId === null).map((tab) => tab.id);
+  const selectedFixedCount = selectableTabs.filter((tab) => tab.pinned && selectedTabIds.has(tab.id)).length;
   useEffect(() => {
     if (open && !wasOpenRef.current) {
       setSelectedTabIds(new Set(unclassifiedIds));
@@ -78,84 +81,73 @@ export function OrganizationDialog({
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="dialog-card organization-dialog" role="dialog" aria-modal="true" aria-labelledby="organization-dialog-title">
         <div className="dialog-heading">
-          <div>
-            <h2 id="organization-dialog-title">整理标签</h2>
-            <p className="dialog-kicker">先生成方案，确认后才移动标签。</p>
-          </div>
-          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭">
+          <h2 id="organization-dialog-title">{t("organize.title")}</h2>
+          <button className="icon-button" type="button" onClick={onClose} aria-label={t("common.close")} disabled={applying}>
             <X aria-hidden="true" size={18} />
           </button>
         </div>
-        <p className="dialog-intro">先生成可审阅的建议，确认后才会移动标签或创建工作区。</p>
-        <div className="mode-options" role="radiogroup" aria-label="整理方式">
-          <label className={mode === "purpose" ? "mode-option selected" : "mode-option"}>
-            <input type="radio" name="organization-mode" checked={mode === "purpose"} onChange={() => onModeChange("purpose")} />
-            <Target aria-hidden="true" size={17} />
-            <span>
-              <strong>按目的</strong>
-              <small>工作、研究、稍后阅读</small>
-            </span>
-          </label>
-          <label className={mode === "type" ? "mode-option selected" : "mode-option"}>
-            <input type="radio" name="organization-mode" checked={mode === "type"} onChange={() => onModeChange("type")} />
-            <LayoutGrid aria-hidden="true" size={17} />
-            <span>
-              <strong>按类型</strong>
-              <small>开发、资料、媒体、阅读</small>
-            </span>
-          </label>
-        </div>
-        <div className="organization-selection">
-          <div className="selection-heading">
-            <strong>选择本次整理的标签</strong>
-            <span>{selectedTabIds.size} / {selectableTabs.length}</span>
-          </div>
-          {selectableTabs.some((tab) => tab.kind === "fixed") ? <p className="selection-note">固定标签默认不选中；如果手动选中，应用后会取消固定并加入工作区。</p> : null}
-          <div className="selection-actions">
-            <button type="button" className="mini-button" onClick={() => setSelectedTabIds(new Set(unclassifiedIds))}>全选未分类</button>
-            <button type="button" className="mini-button" onClick={() => setSelectedTabIds(new Set(selectableTabs.map((tab) => tab.id)))}>全选</button>
-            <button type="button" className="mini-button" onClick={() => setSelectedTabIds(new Set())}>清空</button>
-          </div>
-          <div className="selection-list">
-            {selectableTabs.map((tab) => (
-              <label key={tab.id} className="selection-item">
-                <input
-                  type="checkbox"
-                  checked={selectedTabIds.has(tab.id)}
-                  onChange={(event) => setSelectedTabIds((current) => {
-                    const next = new Set(current);
-                    if (event.target.checked) next.add(tab.id);
-                    else next.delete(tab.id);
-                    return next;
-                  })}
-                />
-                <span>{tabLabel(tab)}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-        {!preview && !loading ? (
-          <div className="organization-empty">
-            <div className="empty-illustration"><ScanLine aria-hidden="true" size={22} /></div>
-            <strong>准备好整理你的标签了吗？</strong>
-            <p>AI 只会读取当前标签的标题和网址，并在确认后执行。</p>
-            <button className="button button-primary" type="button" disabled={!selectedTabIds.size} onClick={() => void onGenerate(mode, [...selectedTabIds])}>
-              生成整理预览
-            </button>
-          </div>
+        {!draftPreview ? (
+          <>
+            <div className="organization-toolbar">
+              <div className="mode-options" role="radiogroup" aria-label={t("organize.mode")}>
+                <label className={mode === "purpose" ? "mode-option selected" : "mode-option"}>
+                  <input className="sr-only" type="radio" name="organization-mode" checked={mode === "purpose"} onChange={() => onModeChange("purpose")} disabled={loading || applying} />
+                  <span>{t("organize.byPurpose")}</span>
+                </label>
+                <label className={mode === "type" ? "mode-option selected" : "mode-option"}>
+                  <input className="sr-only" type="radio" name="organization-mode" checked={mode === "type"} onChange={() => onModeChange("type")} disabled={loading || applying} />
+                  <span>{t("organize.byType")}</span>
+                </label>
+              </div>
+              <span className="selection-count">{selectedTabIds.size} / {selectableTabs.length}</span>
+            </div>
+            <div className="organization-selection">
+              <div className="selection-heading">
+                <strong>{t("organize.selectTabs")}</strong>
+                <div className="selection-actions" aria-label={t("organize.bulkSelect")}>
+                  <button type="button" className="mini-button" onClick={() => setSelectedTabIds(new Set(unclassifiedIds))} disabled={loading || applying}>{t("common.unclassified")}</button>
+                  <button type="button" className="mini-button" onClick={() => setSelectedTabIds(new Set(selectableTabs.map((tab) => tab.id)))} disabled={loading || applying}>{t("organize.selectAll")}</button>
+                  <button type="button" className="mini-button" onClick={() => setSelectedTabIds(new Set())} disabled={loading || applying}>{t("organize.clear")}</button>
+                </div>
+              </div>
+              <div className="selection-list">
+                {selectableTabs.length ? selectableTabs.map((tab) => (
+                  <label key={tab.id} className={tab.pinned ? "selection-item selection-item-fixed" : "selection-item"}>
+                    <input
+                      type="checkbox"
+                      checked={selectedTabIds.has(tab.id)}
+                      disabled={loading || applying}
+                      onChange={(event) => setSelectedTabIds((current) => {
+                        const next = new Set(current);
+                        if (event.target.checked) next.add(tab.id);
+                        else next.delete(tab.id);
+                        return next;
+                      })}
+                    />
+                    <span className="selection-item-label">{tabLabel(tab)}</span>
+                    {tab.pinned ? <span className="selection-item-meta">{t("organize.fixed")}</span> : null}
+                  </label>
+                )) : <p className="selection-empty">{t("organize.noneFound")}</p>}
+              </div>
+              {selectedFixedCount ? <p className="selection-note">{t("organize.fixedWarning", { count: selectedFixedCount })}</p> : null}
+            </div>
+            {error ? <div className="inline-error">{error}</div> : null}
+            <div className="dialog-actions organization-primary-actions" aria-live="polite">
+              <button className="button button-primary" type="button" disabled={!selectedTabIds.size || loading || applying} onClick={() => void onGenerate(mode, [...selectedTabIds])} aria-busy={loading}>
+                {loading ? <><span className="spinner spinner-inline" />{t("organize.analyzing")}</> : t("organize.generate")}
+              </button>
+            </div>
+          </>
         ) : null}
-        {loading ? (
-          <div className="loading-panel" aria-live="polite">
-            <span className="spinner" />
-            正在分析标签…
-          </div>
-        ) : null}
-        {error ? <div className="inline-error">{error}</div> : null}
         {draftPreview && !loading ? (
           <div className="preview-panel">
+            <div className="preview-heading">
+              <strong>{t("organize.preview")}</strong>
+              <button className="mini-button" type="button" onClick={() => setDraftPreview(null)} disabled={applying}>{t("organize.modifySelection")}</button>
+            </div>
             <div className="preview-summary">
-              <span>本次将处理 {draftPreview.sourceTabIds.length} 个标签</span>
-              <span>{draftPreview.groups.length} 个建议工作区</span>
+              <span>{t("common.tabsCount", { count: draftPreview.sourceTabIds.length })}</span>
+              <span>{t("common.workspacesCount", { count: draftPreview.groups.length })}</span>
             </div>
             {draftPreview.groups.length ? (
               <div className="preview-groups">
@@ -175,10 +167,10 @@ export function OrganizationDialog({
                             const tab = tabById.get(tabId);
                             return (
                               <label className="preview-tab-row" key={tabId}>
-                                <span>{tab ? tabLabel(tab) : "标签已关闭"}</span>
-                                <select value={group.id} onChange={(event) => movePreviewTab(tabId, event.target.value || null)} aria-label={`调整${tab ? tabLabel(tab) : "标签"}归属`}>
+                                <span>{tab ? tabLabel(tab) : t("common.tabClosed")}</span>
+                                <select value={group.id} onChange={(event) => movePreviewTab(tabId, event.target.value || null)} aria-label={t("organize.adjustAssignment", { tab: tab ? tabLabel(tab) : t("common.tabClosed") })}>
                                   {draftPreview.groups.map((candidate) => <option value={candidate.id} key={candidate.id}>{candidate.name}</option>)}
-                                  <option value="">未分类</option>
+                                  <option value="">{t("common.unclassified")}</option>
                                 </select>
                               </label>
                             );
@@ -189,22 +181,22 @@ export function OrganizationDialog({
                   );
                 })}
               </div>
-            ) : (
+            ) : draftPreview.unclassifiedTabIds.length ? null : (
               <div className="empty-state compact">
-                <strong>{draftPreview.unclassifiedTabIds.length ? "AI 建议保持未分类" : "没有找到可整理的标签"}</strong>
-                <span>{draftPreview.unclassifiedTabIds.length ? "你仍可确认，将这些标签移到当前窗口的未分类区域。" : "固定标签和特殊页面会保留在原处。"}</span>
+                <strong>{t("organize.noneFound")}</strong>
+                <span>{t("organize.noneFoundHint")}</span>
               </div>
             )}
             {draftPreview.unclassifiedTabIds.length ? (
               <div className="preview-unclassified-list">
-                <p className="preview-note">未分类</p>
+                <p className="preview-note">{t("common.unclassified")}</p>
                 {draftPreview.unclassifiedTabIds.map((tabId) => {
                   const tab = tabById.get(tabId);
                   return (
                     <label className="preview-tab-row" key={tabId}>
-                      <span>{tab ? tabLabel(tab) : "标签已关闭"}</span>
-                      <select value="" onChange={(event) => movePreviewTab(tabId, event.target.value || null)} aria-label={`调整${tab ? tabLabel(tab) : "标签"}归属`}>
-                        <option value="">未分类</option>
+                      <span>{tab ? tabLabel(tab) : t("common.tabClosed")}</span>
+                      <select value="" onChange={(event) => movePreviewTab(tabId, event.target.value || null)} aria-label={t("organize.adjustAssignment", { tab: tab ? tabLabel(tab) : t("common.tabClosed") })}>
+                        <option value="">{t("common.unclassified")}</option>
                         {draftPreview.groups.map((candidate) => <option value={candidate.id} key={candidate.id}>{candidate.name}</option>)}
                       </select>
                     </label>
@@ -212,12 +204,16 @@ export function OrganizationDialog({
                 })}
               </div>
             ) : null}
+            {error ? <div className="inline-error">{error}</div> : null}
             <div className="dialog-actions">
-              <button className="button button-ghost" type="button" onClick={() => void onGenerate(mode, [...selectedTabIds])} disabled={applying || !selectedTabIds.size}>
-                <RefreshCw aria-hidden="true" size={15} />重新生成
+              <button className="button button-ghost" type="button" onClick={() => {
+                setDraftPreview(null);
+                void onGenerate(mode, [...selectedTabIds]);
+              }} disabled={applying || !selectedTabIds.size}>
+                <RefreshCw aria-hidden="true" size={15} />{t("organize.regenerate")}
               </button>
               <button className="button button-primary" type="button" onClick={() => void onConfirm(draftPreview)} disabled={applying || !draftPreview.sourceTabIds.length}>
-                {applying ? <><span className="spinner spinner-inline" />应用中…</> : <><Check aria-hidden="true" size={15} />确认并应用</>}
+                {applying ? <><span className="spinner spinner-inline" />{t("organize.applying")}</> : <><Check aria-hidden="true" size={15} />{t("organize.confirmApply")}</>}
               </button>
             </div>
           </div>

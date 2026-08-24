@@ -7,6 +7,7 @@ import {
   AIServerError,
   AITimeoutError
 } from "./errors";
+import { getAppLanguage, translate } from "../i18n";
 
 export interface AIResponseLike {
   readonly ok: boolean;
@@ -45,7 +46,7 @@ function isAbortException(error: unknown): boolean {
 }
 
 function providerErrorMessage(body: string): string {
-  if (!body) return "AI provider returned an error";
+  if (!body) return translate(getAppLanguage(), "ai.providerError");
   try {
     const parsed: unknown = JSON.parse(body);
     if (typeof parsed === "object" && parsed !== null && "error" in parsed) {
@@ -65,7 +66,7 @@ function statusError(response: AIResponseLike): AIError {
   const status = response.status;
   if (status === 429) return new AIRateLimitError(undefined, status);
   if (status >= 500 && status <= 599) return new AIServerError(undefined, status);
-  return new AIHttpError(`AI provider returned HTTP ${status}`, status);
+  return new AIHttpError(translate(getAppLanguage(), "ai.httpError", { status }), status);
 }
 
 async function withBodyMessage(error: AIError, response: AIResponseLike): Promise<AIError> {
@@ -149,7 +150,7 @@ export async function fetchWithRetry(
         await wait(retryDelayMs, options.signal);
         continue;
       }
-      const networkError = new AINetworkError("Unable to reach AI provider", error);
+      const networkError = new AINetworkError(translate(getAppLanguage(), "ai.networkError"), error);
       if (attempt >= maxRetries) throw networkError;
       await wait(retryDelayMs, options.signal);
     } finally {
@@ -173,7 +174,7 @@ export async function retryOperation<T>(
       return await operation(attempt);
     } catch (error) {
       if (options.signal?.aborted) throw new AIAbortError(undefined, error);
-      const normalized = error instanceof AIError ? error : new AINetworkError("AI operation failed", error);
+      const normalized = error instanceof AIError ? error : new AINetworkError(translate(getAppLanguage(), "ai.operationFailed"), error);
       if (!normalized.retryable || attempt >= maxRetries) throw normalized;
       await wait(retryDelayMs, options.signal);
     }

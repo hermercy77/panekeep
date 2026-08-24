@@ -12,3 +12,7 @@ npm run dev
 ```
 
 Load the generated `.output/chrome-mv3` or `.output/edge-mv3` directory as an unpacked extension.
+
+## Localization
+
+Tab Fridge currently ships Simplified Chinese (`zh-CN`) and English (`en`). Every feature must add and test all supported languages in the same change; see [LOCALIZATION.md](./LOCALIZATION.md).

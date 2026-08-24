@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, CircleAlert, CircleCheck, DatabaseBackup, Download, HardDrive, KeyRound, Plus, Rows3, Settings2, Upload, X } from "lucide-react";
+import { ArrowLeft, CircleAlert, CircleCheck, DatabaseBackup, Download, Plus, Rows3, Settings2, Upload, X } from "lucide-react";
 import type { Workspace } from "../shared/contracts";
 import { useTabFridgeState } from "../ui-state/useTabFridgeState";
 import { WorkspaceDialog } from "./WorkspaceDialog";
 import { createAIConfigStore, describeModelAvailability, type ModelAvailabilityNotice } from "../ai/config";
 import { createOpenAICompatibleClient } from "../ai/client";
 import { workspaceColorClass } from "./workspaceColors";
+import { useI18n } from "../i18n/react";
+import { APP_LANGUAGES, type AppLanguage } from "../i18n/catalog";
+import type { BackupImportSkippedTab } from "../shared/backup";
 
 function sidepanelUrl(): string {
   try {
@@ -17,6 +20,7 @@ function sidepanelUrl(): string {
 }
 
 export function ManageApp() {
+  const { language, setLanguage, t } = useI18n();
   const state = useTabFridgeState();
   const { snapshot } = state;
   const [dialog, setDialog] = useState<{ windowKey: string; workspace?: Workspace } | null>(null);
@@ -26,12 +30,29 @@ export function ManageApp() {
   const [aiConfig, setAiConfig] = useState({ baseUrl: "https://api.openai.com/v1", apiKey: "", model: "" });
   const [testingAI, setTestingAI] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [skippedImportTabs, setSkippedImportTabs] = useState<BackupImportSkippedTab[]>([]);
+  const [activeSection, setActiveSection] = useState("workspaces");
   const importInput = useRef<HTMLInputElement>(null);
   const aiStore = useMemo(() => createAIConfigStore(), []);
 
   useEffect(() => {
     void aiStore.load().then(setAiConfig).catch(() => undefined);
   }, [aiStore]);
+
+  useEffect(() => {
+    if (!("IntersectionObserver" in globalThis)) return;
+    const sections = ["workspaces", "ai-settings", "backup"]
+      .map((id) => document.getElementById(id))
+      .filter((section): section is HTMLElement => Boolean(section));
+    const observer = new IntersectionObserver((entries) => {
+      const current = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((left, right) => Math.abs(left.boundingClientRect.top) - Math.abs(right.boundingClientRect.top))[0];
+      if (current?.target.id) setActiveSection(current.target.id);
+    }, { rootMargin: "-20% 0px -60%", threshold: [0, 0.2, 0.6] });
+    sections.forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, []);
 
   const currentWindowKey = snapshot.windows.find((window) => window.isCurrent)?.key ?? snapshot.windows[0]?.key ?? "window:unknown";
   const tabsForWorkspace = (workspaceId: string) => snapshot.tabs.filter((tab) => tab.workspaceId === workspaceId).length;
@@ -63,16 +84,16 @@ export function ManageApp() {
     anchor.download = `tab-fridge-backup-${new Date().toISOString().slice(0, 10)}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
-    setNotice({ tone: "success", message: "备份已导出到下载文件夹" });
+    setNotice({ tone: "success", message: t("notice.backupExported") });
   };
 
   const saveAI = async () => {
     try {
       const saved = await aiStore.save(aiConfig);
       setAiConfig(saved);
-      setNotice({ tone: "success", message: "AI 设置已保存" });
+      setNotice({ tone: "success", message: t("notice.aiSaved") });
     } catch (error) {
-      setNotice({ tone: "error", message: error instanceof Error ? error.message : "AI 设置保存失败" });
+      setNotice({ tone: "error", message: error instanceof Error ? error.message : t("notice.aiSaveFailed") });
     }
   };
 
@@ -82,9 +103,9 @@ export function ManageApp() {
     try {
       const config = await aiStore.save(aiConfig);
       const result = await createOpenAICompatibleClient(config).testConnection();
-      setNotice(describeModelAvailability(config.model, result.models));
+      setNotice(describeModelAvailability(config.model, result.models, language));
     } catch (error) {
-      setNotice({ tone: "error", message: error instanceof Error ? error.message : "连接测试失败" });
+      setNotice({ tone: "error", message: error instanceof Error ? error.message : t("notice.connectionFailed") });
     } finally {
       setTestingAI(false);
     }
@@ -92,11 +113,16 @@ export function ManageApp() {
 
   const importBackup = async (file: File) => {
     setFileError(null);
+    setSkippedImportTabs([]);
     try {
       const text = await file.text();
-      if (await state.importBackup(text)) setNotice({ tone: "success", message: "备份已导入，请刷新浏览器窗口查看恢复结果" });
+      const result = await state.importBackup(text);
+      if (result) {
+        setSkippedImportTabs(result.skippedTabs);
+        setNotice({ tone: "success", message: t("notice.backupImported") });
+      }
     } catch (error) {
-      setFileError(error instanceof Error ? error.message : "备份导入失败");
+      setFileError(error instanceof Error ? error.message : t("notice.backupImportFailed"));
     }
   };
 
@@ -107,35 +133,39 @@ export function ManageApp() {
           <div className="brand-mark" aria-hidden="true"><Rows3 size={18} /></div>
           <div>
             <h1>Tab Fridge</h1>
-            <p>工作区管理</p>
+            <p>{t("manage.subtitle")}</p>
           </div>
         </div>
-        <a className="button button-ghost" href={sidepanelUrl()}><ArrowLeft aria-hidden="true" size={15} />返回侧边栏</a>
+        <div className="manage-header-actions">
+          <label className="language-control">
+            <span>{t("language.label")}</span>
+            <select value={language} onChange={(event) => void setLanguage(event.target.value as AppLanguage)} aria-label={t("language.label")}>
+              {APP_LANGUAGES.map((value) => <option key={value} value={value}>{t(value === "zh-CN" ? "language.zhCN" : "language.en")}</option>)}
+            </select>
+          </label>
+          <a className="button button-ghost manage-back-button" href={sidepanelUrl()} aria-label={t("manage.backToSide")} title={t("manage.backToSide")}><ArrowLeft aria-hidden="true" size={15} /><span className="manage-back-label">{t("manage.backToSide")}</span></a>
+        </div>
       </header>
       <div className="manage-layout">
-        <aside className="manage-nav" aria-label="管理导航">
-          <button className="manage-nav-item active" type="button"><Rows3 aria-hidden="true" size={16} />工作区 <span>{snapshot.workspaces.length}</span></button>
-          <a className="manage-nav-item" href="#ai-settings"><Settings2 aria-hidden="true" size={16} />AI 设置</a>
-          <a className="manage-nav-item" href="#backup"><DatabaseBackup aria-hidden="true" size={16} />备份与恢复</a>
-          <div className="manage-nav-note">
-            <HardDrive aria-hidden="true" size={15} />本地数据
-            <small>只保存在此浏览器</small>
-          </div>
+        <aside className="manage-nav" aria-label={t("manage.navigation")}>
+          <a className={activeSection === "workspaces" ? "manage-nav-item active" : "manage-nav-item"} href="#workspaces" onClick={() => setActiveSection("workspaces")} aria-current={activeSection === "workspaces" ? "page" : undefined}><Rows3 aria-hidden="true" size={16} />{t("manage.workspaces")} <span>{snapshot.workspaces.length}</span></a>
+          <a className={activeSection === "ai-settings" ? "manage-nav-item active" : "manage-nav-item"} href="#ai-settings" onClick={() => setActiveSection("ai-settings")} aria-current={activeSection === "ai-settings" ? "page" : undefined}><Settings2 aria-hidden="true" size={16} />{t("manage.aiSettings")}</a>
+          <a className={activeSection === "backup" ? "manage-nav-item active" : "manage-nav-item"} href="#backup" onClick={() => setActiveSection("backup")} aria-current={activeSection === "backup" ? "page" : undefined}><DatabaseBackup aria-hidden="true" size={16} />{t("manage.backupRestore")}</a>
         </aside>
         <section className="manage-content">
-          {state.error ? <div className="error-banner" role="alert"><CircleAlert aria-hidden="true" size={17} /><p>{state.error}</p><button type="button" onClick={state.clearError} aria-label="关闭错误提示"><X aria-hidden="true" size={14} /></button></div> : null}
-          {notice ? <div className={notice.tone === "success" ? "success-banner" : "error-banner"} role={notice.tone === "success" ? "status" : "alert"}>{notice.tone === "success" ? <CircleCheck aria-hidden="true" size={17} /> : <CircleAlert aria-hidden="true" size={17} />}<p>{notice.message}</p><button type="button" onClick={() => setNotice(null)} aria-label="关闭通知"><X aria-hidden="true" size={14} /></button></div> : null}
+          {state.error ? <div className="error-banner" role="alert"><CircleAlert aria-hidden="true" size={17} /><p>{state.error}</p><button type="button" onClick={state.clearError} aria-label={t("side.closeError")}><X aria-hidden="true" size={14} /></button></div> : null}
+          {notice ? <div className={notice.tone === "success" ? "success-banner" : "error-banner"} role={notice.tone === "success" ? "status" : "alert"}>{notice.tone === "success" ? <CircleCheck aria-hidden="true" size={17} /> : <CircleAlert aria-hidden="true" size={17} />}<p>{notice.message}</p><button type="button" onClick={() => setNotice(null)} aria-label={t("manage.closeNotice")}><X aria-hidden="true" size={14} /></button></div> : null}
           <section className="manage-section" id="workspaces">
             <div className="section-title-row">
               <div>
-                <h2>工作区</h2>
-                <p>一个工作区对应一个浏览器原生标签组。</p>
+                <h2>{t("manage.workspaces")}</h2>
+                <p>{t("manage.workspaceDescription")}</p>
               </div>
-              <button className="button button-primary" type="button" onClick={openCreate}><Plus aria-hidden="true" size={15} />新建工作区</button>
+              <button className="button button-primary" type="button" onClick={openCreate}><Plus aria-hidden="true" size={15} />{t("common.newWorkspace")}</button>
             </div>
-            {state.status === "loading" && !snapshot.workspaces.length ? <div className="loading-panel"><span className="spinner" />正在加载工作区…</div> : null}
+            {state.status === "loading" && !snapshot.workspaces.length ? <div className="loading-panel"><span className="spinner" />{t("manage.loadingWorkspaces")}</div> : null}
             {state.status !== "loading" && !snapshot.workspaces.length ? (
-              <div className="empty-state manage-empty"><div className="empty-illustration"><Rows3 aria-hidden="true" size={22} /></div><strong>还没有工作区</strong><span>创建工作区后，相关标签会出现在同一个原生标签组中。</span><button className="button button-primary" type="button" onClick={openCreate}><Plus aria-hidden="true" size={15} />创建工作区</button></div>
+              <div className="empty-state manage-empty"><div className="empty-illustration"><Rows3 aria-hidden="true" size={22} /></div><strong>{t("manage.noWorkspaces")}</strong><span>{t("manage.noWorkspacesHint")}</span><button className="button button-primary" type="button" onClick={openCreate}><Plus aria-hidden="true" size={15} />{t("common.createWorkspace")}</button></div>
             ) : null}
             <div className="workspace-card-grid">
               {[...snapshot.workspaces].sort((a, b) => a.order - b.order).map((workspace) => {
@@ -145,14 +175,14 @@ export function ManageApp() {
                       <div className="workspace-card-heading">
                         <span className={`workspace-dot workspace-dot-${workspaceColorClass(workspace.color)}`} aria-hidden="true" />
                         <h3>{workspace.name}</h3>
-                        <span className="workspace-card-count">{tabsForWorkspace(workspace.id)} 标签</span>
+                        <span className="workspace-card-count">{t("common.tabsCount", { count: tabsForWorkspace(workspace.id) })}</span>
                       </div>
-                      <p className={workspace.description ? "workspace-card-description" : "workspace-card-description muted"}>{workspace.description || "还没有描述"}</p>
+                      {workspace.description ? <p className="workspace-card-description">{workspace.description}</p> : null}
                       <div className="workspace-card-bottom">
-                        <div className="tag-list">{workspace.tags.length ? workspace.tags.map((tag) => <span className="tag" key={tag}>{tag}</span>) : <span className="tag muted">无标签</span>}</div>
+                        {workspace.tags.length ? <div className="tag-list">{workspace.tags.map((tag) => <span className="tag" key={tag}>{tag}</span>)}</div> : null}
                         <div className="card-actions">
-                          <button className="mini-button" type="button" onClick={(event) => { event.stopPropagation(); openEdit(workspace); }}>编辑</button>
-                          <button className="mini-button danger" type="button" onClick={(event) => { event.stopPropagation(); setDeleteTarget(workspace); }}>删除</button>
+                          <button className="mini-button" type="button" onClick={(event) => { event.stopPropagation(); openEdit(workspace); }}>{t("common.edit")}</button>
+                          <button className="mini-button danger" type="button" onClick={(event) => { event.stopPropagation(); setDeleteTarget(workspace); }}>{t("common.delete")}</button>
                         </div>
                       </div>
                     </div>
@@ -163,30 +193,37 @@ export function ManageApp() {
           </section>
 
           <section className="manage-section split-section" id="ai-settings">
-            <div className="section-title-row"><div><h2>AI 设置</h2><p>配置 OpenAI-compatible API。仅在主动整理时调用。</p></div><span className="local-badge"><KeyRound aria-hidden="true" size={13} />本地保存</span></div>
+            <div className="section-title-row"><div><h2>{t("manage.aiSettings")}</h2><p>{t("manage.aiDescription")}</p></div></div>
             <div className="settings-card">
               <label className="field-label" htmlFor="ai-base-url">Base URL</label>
               <input id="ai-base-url" className="text-input" value={aiConfig.baseUrl} onChange={(event) => setAiConfig({ ...aiConfig, baseUrl: event.target.value })} />
               <div className="form-columns">
-                <div><label className="field-label" htmlFor="ai-model">模型</label><input id="ai-model" className="text-input" value={aiConfig.model} onChange={(event) => setAiConfig({ ...aiConfig, model: event.target.value })} placeholder="例如：gpt-4o-mini" /></div>
-                <div><label className="field-label" htmlFor="ai-key">API Key</label><input id="ai-key" className="text-input" type="password" value={aiConfig.apiKey} onChange={(event) => setAiConfig({ ...aiConfig, apiKey: event.target.value })} placeholder="留空表示未配置" /></div>
+                <div><label className="field-label" htmlFor="ai-model">{t("manage.model")}</label><input id="ai-model" className="text-input" value={aiConfig.model} onChange={(event) => setAiConfig({ ...aiConfig, model: event.target.value })} placeholder={t("manage.modelPlaceholder")} /></div>
+                <div><label className="field-label" htmlFor="ai-key">API Key</label><input id="ai-key" className="text-input" type="password" value={aiConfig.apiKey} onChange={(event) => setAiConfig({ ...aiConfig, apiKey: event.target.value })} placeholder={t("manage.keyPlaceholder")} /></div>
               </div>
-              <div className="settings-actions"><span>配置不会上传到 Tab Fridge。</span><div className="button-row"><button className="button button-ghost" type="button" onClick={() => void testAI()} disabled={testingAI}>{testingAI ? "测试中…" : "测试连接"}</button><button className="button button-primary" type="button" onClick={() => void saveAI()}>保存设置</button></div></div>
+              <div className="settings-actions"><div className="button-row"><button className="button button-ghost" type="button" onClick={() => void testAI()} disabled={testingAI}>{testingAI ? t("manage.testing") : t("manage.testConnection")}</button><button className="button button-primary" type="button" onClick={() => void saveAI()}>{t("manage.saveSettings")}</button></div></div>
             </div>
           </section>
 
           <section className="manage-section split-section" id="backup">
-            <div className="section-title-row"><div><h2>备份与恢复</h2><p>把窗口、工作区和标签保存为可迁移的 JSON。</p></div></div>
-            <div className="backup-card"><div className="backup-icon"><Download aria-hidden="true" size={18} /></div><div><strong>导出 JSON 备份</strong><p>包含 {snapshot.tabs.length} 个标签、{snapshot.workspaces.length} 个工作区和 {snapshot.windows.length} 个窗口。</p></div><button className="button button-ghost" type="button" onClick={() => void exportBackup()}>导出备份</button></div>
-            <div className="backup-card"><div className="backup-icon"><Upload aria-hidden="true" size={18} /></div><div><strong>导入 JSON 备份</strong><p>按备份结构新建窗口，不覆盖当前浏览器状态。</p></div><button className="button button-ghost" type="button" onClick={() => importInput.current?.click()}>选择文件</button><input ref={importInput} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void importBackup(file); event.currentTarget.value = ""; }} /></div>
+            <div className="section-title-row"><div><h2>{t("manage.backupRestore")}</h2><p>{t("manage.backupDescription")}</p></div></div>
+            <div className="backup-card"><div className="backup-icon"><Download aria-hidden="true" size={18} /></div><div><strong>{t("manage.exportTitle")}</strong><p>{t("manage.exportSummary", { tabs: snapshot.tabs.length, workspaces: snapshot.workspaces.length, windows: snapshot.windows.length })}</p></div><button className="button button-ghost" type="button" onClick={() => void exportBackup()}>{t("manage.exportBackup")}</button></div>
+            <div className="backup-card"><div className="backup-icon"><Upload aria-hidden="true" size={18} /></div><div><strong>{t("manage.importTitle")}</strong><p>{t("manage.importDescription")}</p></div><button className="button button-ghost" type="button" onClick={() => importInput.current?.click()}>{t("manage.chooseFile")}</button><input ref={importInput} type="file" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void importBackup(file); event.currentTarget.value = ""; }} /></div>
             {fileError ? <p className="inline-error">{fileError}</p> : null}
-            <p className="muted-note">导出的文件不包含 API Key、Cookie、密码或网页正文。</p>
+            {skippedImportTabs.length ? (
+              <div className="import-skip-report" role="status">
+                <strong>{t("manage.importSkippedTitle", { count: skippedImportTabs.length })}</strong>
+                <p>{t("manage.importSkippedHint")}</p>
+                <ul>{skippedImportTabs.map((tab) => <li key={tab.id}><span>{tab.title || tab.url || tab.id}</span>{tab.url ? <small>{tab.url}</small> : null}<small>{t("backup.specialRestoreFailed")}</small></li>)}</ul>
+              </div>
+            ) : null}
+            <p className="muted-note">{t("manage.privacyNote")}</p>
           </section>
         </section>
       </div>
 
       <WorkspaceDialog open={Boolean(dialog)} windowKey={dialog?.windowKey ?? currentWindowKey} workspace={dialog?.workspace} busy={busy} onClose={() => setDialog(null)} onSubmit={submit} />
-      {deleteTarget ? <div className="dialog-backdrop" role="presentation"><section className="dialog-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="manage-delete-title"><div className="confirm-icon"><CircleAlert aria-hidden="true" size={18} /></div><h2 id="manage-delete-title">删除「{deleteTarget.name}」？</h2><p>工作区中的标签不会关闭，会回到未分类。</p><div className="dialog-actions"><button className="button button-ghost" type="button" onClick={() => setDeleteTarget(null)}>取消</button><button className="button button-danger" type="button" onClick={() => void remove()}>删除工作区</button></div></section></div> : null}
+      {deleteTarget ? <div className="dialog-backdrop" role="presentation"><section className="dialog-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="manage-delete-title"><div className="confirm-icon"><CircleAlert aria-hidden="true" size={18} /></div><h2 id="manage-delete-title">{t("side.deleteTitle", { name: deleteTarget.name })}</h2><p>{t("manage.deleteDescription")}</p><div className="dialog-actions"><button className="button button-ghost" type="button" onClick={() => setDeleteTarget(null)}>{t("common.cancel")}</button><button className="button button-danger" type="button" onClick={() => void remove()}>{t("side.deleteWorkspace")}</button></div></section></div> : null}
     </main>
   );
 }

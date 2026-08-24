@@ -7,5 +7,5 @@
   "spacing": "locked 4-point named scale in tokens.css",
   "designSystem": "design.md",
   "preserve": ["routes", "component ownership", "copy intent", "business logic", "Cobalt theme", "Workbench structure"],
-  "introduce": ["stronger window/workspace/tab-type hierarchy", "explicit structural dividers"]
+  "introduce": ["task-weighted information density", "progressive disclosure for optional metadata", "stable collapsible tab-type sections"]
 }

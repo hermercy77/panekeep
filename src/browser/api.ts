@@ -4,6 +4,7 @@
  * namespace. It also makes the engine straightforward to exercise with a
  * fake API in unit/integration tests.
  */
+import { getAppLanguage, translate } from "../i18n";
 
 export type BrowserEvent = {
   addListener?: (listener: (...args: any[]) => unknown) => void;
@@ -16,13 +17,14 @@ export interface BrowserLike {
   tabGroups?: Record<string, any>;
   runtime?: Record<string, any>;
   sidePanel?: Record<string, any>;
+  action?: Record<string, any>;
 }
 
 export function getBrowserApi(source?: BrowserLike): BrowserLike {
   if (source) return source;
   const scope = globalThis as unknown as { browser?: BrowserLike; chrome?: BrowserLike };
   const candidate = scope.browser ?? scope.chrome;
-  if (!candidate) throw new Error("Tab Fridge browser API is unavailable");
+  if (!candidate) throw new Error(translate(getAppLanguage(), "browser.unavailable"));
   return candidate;
 }
 
@@ -34,7 +36,7 @@ export async function invokeBrowser<T>(
 ): Promise<T> {
   const method = owner?.[methodName];
   if (typeof method !== "function") {
-    throw new Error(`Browser API method is unavailable: ${methodName}`);
+    throw new Error(translate(getAppLanguage(), "browser.methodUnavailable", { method: methodName }));
   }
 
   return new Promise<T>((resolve, reject) => {
@@ -93,4 +95,3 @@ export function addBrowserListener(
   event.addListener(listener);
   return () => event.removeListener?.(listener);
 }
-

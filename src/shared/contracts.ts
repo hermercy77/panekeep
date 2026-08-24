@@ -13,6 +13,7 @@ export const tabRecordSchema = z.object({
   faviconUrl: z.string().optional(),
   index: z.number().int().nonnegative(),
   pinned: z.boolean(),
+  active: z.boolean().optional(),
   groupId: z.number().int().optional(),
   lastActivatedAt: z.number().optional(),
   specialReason: z.string().optional()

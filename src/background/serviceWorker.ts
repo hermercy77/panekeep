@@ -6,6 +6,7 @@ import {
   isBackgroundRequest,
   isUiActionMessage
 } from "../shared/messages";
+import { initializeAppLanguage, subscribeAppLanguage, translate, type AppLanguage } from "../i18n";
 
 let engine: BrowserStateEngine | undefined;
 let startPromise: Promise<BrowserStateEngine> | undefined;
@@ -20,9 +21,13 @@ export function startBackground(options: { api?: BrowserLike } = {}): Promise<Br
   const api = options.api ?? getBrowserApi();
   engine = new BrowserStateEngine({ api });
   startPromise = (async () => {
-    await configureSidePanelAction(api);
+    const language = await initializeAppLanguage();
+    await configureSidePanelAction(api, language);
+    removeRuntimeHandlers.push(subscribeAppLanguage((next) => {
+      void configureActionTitle(api, next);
+    }));
     await engine?.start();
-    if (!engine) throw new Error("Tab Fridge background engine failed to initialize");
+    if (!engine) throw new Error(translate(language, "background.initFailed"));
     removeRuntimeHandlers.push(registerStateBroadcast(api, engine));
     backgroundReady = true;
     return engine;
@@ -46,7 +51,17 @@ export function startBackground(options: { api?: BrowserLike } = {}): Promise<Br
   return startPromise;
 }
 
-async function configureSidePanelAction(api: BrowserLike): Promise<void> {
+async function configureActionTitle(api: BrowserLike, language: AppLanguage): Promise<void> {
+  if (typeof api.action?.setTitle !== "function") return;
+  try {
+    await invokeBrowser<void>(api.action, "setTitle", { title: translate(language, "extension.actionTitle") });
+  } catch {
+    // The manifest-localized title remains available on browsers without this API.
+  }
+}
+
+async function configureSidePanelAction(api: BrowserLike, language: AppLanguage): Promise<void> {
+  await configureActionTitle(api, language);
   if (typeof api.sidePanel?.setPanelBehavior !== "function") return;
   try {
     await invokeBrowser<void>(api.sidePanel, "setPanelBehavior", { openPanelOnActionClick: true });
