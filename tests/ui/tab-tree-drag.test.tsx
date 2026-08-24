@@ -106,6 +106,9 @@ describe("TabTree drag and drop", () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
+    const onMoveTabs = vi.fn();
+    const onMoveWorkspace = vi.fn();
+    const onRequestWorkspaceMerge = vi.fn();
     await act(async () => root.render(
       <TabTree
         snapshot={snapshot}
@@ -121,9 +124,9 @@ describe("TabTree drag and drop", () => {
         onToggleWorkspace={vi.fn()}
         onActivateTab={vi.fn()}
         onCheckedTabIdsChange={vi.fn()}
-        onMoveTabs={vi.fn()}
-        onMoveWorkspace={vi.fn()}
-        onRequestWorkspaceMerge={vi.fn()}
+        onMoveTabs={onMoveTabs}
+        onMoveWorkspace={onMoveWorkspace}
+        onRequestWorkspaceMerge={onRequestWorkspaceMerge}
         onEditWorkspace={vi.fn()}
         onDeleteWorkspace={vi.fn()}
         onCreateWorkspace={vi.fn()}
@@ -136,6 +139,25 @@ describe("TabTree drag and drop", () => {
     expect(JSON.parse(transfer.getData("application/x-tab-fridge"))).toEqual({ type: "tabs", ids: ["tab-a", "tab-loose"], anchorId: "tab-a" });
     expect(transfer.dragImage?.querySelector(".tab-drag-ghost-count")?.textContent).toBe("2");
     expect(host.querySelectorAll(".tab-row.dragging-source")).toHaveLength(2);
+    const cancel = host.querySelector<HTMLElement>(".drag-cancel-zone");
+    expect(cancel?.textContent).toContain("拖到这里取消");
+    await act(async () => dispatchDrag(cancel!, "dragenter", transfer));
+    expect(cancel?.classList.contains("drag-active")).toBe(true);
+    expect(cancel?.textContent).toContain("松开取消");
+    await act(async () => dispatchDrag(cancel!, "drop", transfer));
+    expect(host.querySelector(".drag-cancel-zone")).toBeNull();
+    expect(onMoveTabs).not.toHaveBeenCalled();
+    expect(onMoveWorkspace).not.toHaveBeenCalled();
+    expect(onRequestWorkspaceMerge).not.toHaveBeenCalled();
+
+    const workspaceTransfer = new TestDataTransfer();
+    const workspaceHeading = host.querySelector<HTMLElement>(".workspace-heading");
+    await act(async () => dispatchDrag(workspaceHeading!, "dragstart", workspaceTransfer));
+    const workspaceCancel = host.querySelector<HTMLElement>(".drag-cancel-zone");
+    await act(async () => dispatchDrag(workspaceCancel!, "drop", workspaceTransfer));
+    expect(host.querySelector(".drag-cancel-zone")).toBeNull();
+    expect(onMoveWorkspace).not.toHaveBeenCalled();
+    expect(onRequestWorkspaceMerge).not.toHaveBeenCalled();
     await act(async () => root.unmount());
   });
 

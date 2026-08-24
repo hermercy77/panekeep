@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { AppWindow, ChevronDown, ChevronRight, GripVertical, Inbox, MoreHorizontal, Pencil, Pin, Plus, Rows3, ShieldAlert, Trash2 } from "lucide-react";
+import { AppWindow, ChevronDown, ChevronRight, GripVertical, Inbox, MoreHorizontal, Pencil, Pin, Plus, Rows3, ShieldAlert, Trash2, X } from "lucide-react";
 import type { TabRecord, WindowState, Workspace } from "../shared/contracts";
 import { tabHost, tabLabel } from "../ui-state/model";
 import type { TabFridgeSnapshot } from "../ui-state/model";
@@ -649,6 +649,23 @@ export function TabTree({
           </section>
         );
       })}
+      {dragPayload ? (
+        <div
+          className={`drag-cancel-zone${activeDropTarget === "cancel" ? " drag-active" : ""}`}
+          role="status"
+          onDragEnter={(event) => activateDropTarget(event, "cancel")}
+          onDragOver={(event) => activateDropTarget(event, "cancel")}
+          onDragLeave={(event) => leaveDropTarget(event, "cancel")}
+          onDrop={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            finishDrag(event);
+          }}
+        >
+          <X aria-hidden="true" size={16} />
+          <span>{activeDropTarget === "cancel" ? t("tree.dropCancelActive") : t("tree.dropCancel")}</span>
+        </div>
+      ) : null}
     </div>
   );
 }
