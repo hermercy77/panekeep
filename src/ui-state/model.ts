@@ -3,10 +3,12 @@ import type {
   OrganizationPreview,
   TabRecord,
   WindowState,
-  Workspace
+  Workspace,
+  WorkspaceMergePreview
 } from "../shared/contracts";
 import { getAppLanguage, translate } from "../i18n";
 import type { BackupImportResult } from "../shared/backup";
+import type { MoveTabsResponse } from "../shared/messages";
 
 /** The small, read-only view model consumed by both UI entrypoints. */
 export interface TabFridgeSnapshot {
@@ -31,7 +33,10 @@ export interface TabFridgeAdapter {
   updateWorkspace(id: string, draft: Partial<WorkspaceDraft>): Promise<Workspace>;
   deleteWorkspace(id: string): Promise<void>;
   moveTab(tabId: string, workspaceId: string | null): Promise<void>;
+  moveTabs(tabIds: string[], workspaceId: string | null): Promise<MoveTabsResponse>;
   moveWorkspace(workspaceId: string, beforeWorkspaceId?: string): Promise<void>;
+  previewWorkspaceMerge(sourceWorkspaceId: string, targetWorkspaceId: string): Promise<WorkspaceMergePreview>;
+  mergeWorkspaces(preview: WorkspaceMergePreview): Promise<void>;
   activateTab(tabId: string): Promise<void>;
   requestOrganization(mode: OrganizationMode, tabIds?: string[]): Promise<OrganizationPreview>;
   applyOrganization(preview: OrganizationPreview): Promise<void>;

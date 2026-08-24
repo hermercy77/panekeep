@@ -83,6 +83,18 @@ export const organizationPreviewSchema = z.object({
 });
 export type OrganizationPreview = z.infer<typeof organizationPreviewSchema>;
 
+export const workspaceMergePreviewSchema = z.object({
+  sourceWorkspaceId: z.string().min(1),
+  targetWorkspaceId: z.string().min(1),
+  sourceWindowKey: z.string().min(1),
+  targetWindowKey: z.string().min(1),
+  sourceWorkspaceFingerprint: z.string().min(1),
+  targetWorkspaceFingerprint: z.string().min(1),
+  sourceTabIds: z.array(z.string()),
+  sourceFingerprint: z.string().min(1)
+});
+export type WorkspaceMergePreview = z.infer<typeof workspaceMergePreviewSchema>;
+
 export const backupSchema = z.object({
   schemaVersion: z.literal(1),
   product: z.literal("tab-fridge"),

@@ -13,6 +13,7 @@ class TestDataTransfer {
   effectAllowed = "none";
   dropEffect = "none";
   private readonly values = new Map<string, string>();
+  dragImage?: Element;
 
   getData(type: string): string {
     return this.values.get(type) ?? "";
@@ -21,12 +22,17 @@ class TestDataTransfer {
   setData(type: string, value: string): void {
     this.values.set(type, value);
   }
+
+  setDragImage(image: Element): void {
+    this.dragImage = image;
+  }
 }
 
-function dispatchDrag(target: Element, type: string, dataTransfer: TestDataTransfer): void {
+function dispatchDrag(target: Element, type: string, dataTransfer: TestDataTransfer, clientY = 0): void {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
   Object.defineProperty(event, "relatedTarget", { value: null });
+  Object.defineProperty(event, "clientY", { value: clientY });
   target.dispatchEvent(event);
 }
 
@@ -50,11 +56,94 @@ afterEach(async () => {
 });
 
 describe("TabTree drag and drop", () => {
+  it("changes selection only through checkboxes and supports Shift ranges", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const onActivateTab = vi.fn();
+    const onCheckedTabIdsChange = vi.fn();
+    const props = {
+      snapshot,
+      query: "",
+      filter: "all" as const,
+      windowScope: "all" as const,
+      workspaceTag: "",
+      expandedWindows: new Set(["window:1"]),
+      expandedWorkspaces: new Set(["ws-a", "ws-b"]),
+      selectedTabId: null,
+      onToggleWindow: vi.fn(),
+      onToggleWorkspace: vi.fn(),
+      onActivateTab,
+      onCheckedTabIdsChange,
+      onMoveTabs: vi.fn(),
+      onMoveWorkspace: vi.fn(),
+      onRequestWorkspaceMerge: vi.fn(),
+      onEditWorkspace: vi.fn(),
+      onDeleteWorkspace: vi.fn(),
+      onCreateWorkspace: vi.fn()
+    };
+
+    await act(async () => root.render(<TabTree {...props} checkedTabIds={new Set()} />));
+    const firstCheckbox = host.querySelector<HTMLInputElement>('[aria-label="选择项目 A 标签"]');
+    expect(firstCheckbox).not.toBeNull();
+    await act(async () => firstCheckbox?.click());
+    expect(onActivateTab).not.toHaveBeenCalled();
+    expect([...onCheckedTabIdsChange.mock.calls[0][0]]).toEqual(["tab-a"]);
+
+    await act(async () => root.render(<TabTree {...props} checkedTabIds={new Set(["tab-a"])} />));
+    const looseCheckbox = host.querySelector<HTMLInputElement>('[aria-label="选择未分类标签"]');
+    const shiftClick = new MouseEvent("click", { bubbles: true, shiftKey: true });
+    await act(async () => looseCheckbox?.dispatchEvent(shiftClick));
+    expect([...onCheckedTabIdsChange.mock.calls.at(-1)[0]]).toEqual(["tab-a", "tab-loose"]);
+
+    await act(async () => host.querySelector<HTMLButtonElement>(".tab-activate")?.click());
+    expect(onActivateTab).toHaveBeenCalledWith("tab-a");
+    expect(host.querySelector<HTMLInputElement>('[aria-label="特殊页面不可移动"]')?.disabled).toBe(true);
+    await act(async () => root.unmount());
+  });
+
+  it("drags every checked tab with a compact count ghost", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () => root.render(
+      <TabTree
+        snapshot={snapshot}
+        query=""
+        filter="all"
+        windowScope="all"
+        workspaceTag=""
+        expandedWindows={new Set(["window:1"])}
+        expandedWorkspaces={new Set(["ws-a", "ws-b"])}
+        selectedTabId={null}
+        checkedTabIds={new Set(["tab-a", "tab-loose"])}
+        onToggleWindow={vi.fn()}
+        onToggleWorkspace={vi.fn()}
+        onActivateTab={vi.fn()}
+        onCheckedTabIdsChange={vi.fn()}
+        onMoveTabs={vi.fn()}
+        onMoveWorkspace={vi.fn()}
+        onRequestWorkspaceMerge={vi.fn()}
+        onEditWorkspace={vi.fn()}
+        onDeleteWorkspace={vi.fn()}
+        onCreateWorkspace={vi.fn()}
+      />
+    ));
+
+    const source = [...host.querySelectorAll<HTMLElement>(".tab-row")].find((row) => row.textContent?.includes("项目 A 标签"));
+    const transfer = new TestDataTransfer();
+    await act(async () => dispatchDrag(source!, "dragstart", transfer));
+    expect(JSON.parse(transfer.getData("application/x-tab-fridge"))).toEqual({ type: "tabs", ids: ["tab-a", "tab-loose"], anchorId: "tab-a" });
+    expect(transfer.dragImage?.querySelector(".tab-drag-ghost-count")?.textContent).toBe("2");
+    expect(host.querySelectorAll(".tab-row.dragging-source")).toHaveLength(2);
+    await act(async () => root.unmount());
+  });
+
   it("keeps nested tab payloads intact and accepts workspace and unclassified drops", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-    const onMoveTab = vi.fn();
+    const onMoveTabs = vi.fn();
 
     await act(async () => {
       root.render(
@@ -67,11 +156,14 @@ describe("TabTree drag and drop", () => {
           expandedWindows={new Set(["window:1"])}
           expandedWorkspaces={new Set(["ws-a", "ws-b"])}
           selectedTabId={null}
+          checkedTabIds={new Set()}
           onToggleWindow={vi.fn()}
           onToggleWorkspace={vi.fn()}
           onActivateTab={vi.fn()}
-          onMoveTab={onMoveTab}
+          onCheckedTabIdsChange={vi.fn()}
+          onMoveTabs={onMoveTabs}
           onMoveWorkspace={vi.fn()}
+          onRequestWorkspaceMerge={vi.fn()}
           onEditWorkspace={vi.fn()}
           onDeleteWorkspace={vi.fn()}
           onCreateWorkspace={vi.fn()}
@@ -79,7 +171,7 @@ describe("TabTree drag and drop", () => {
       );
     });
 
-    const rows = [...host.querySelectorAll<HTMLButtonElement>("button.tab-row")];
+    const rows = [...host.querySelectorAll<HTMLElement>(".tab-row")];
     const source = rows.find((row) => row.textContent?.includes("项目 A 标签"));
     const special = rows.find((row) => row.textContent?.includes("扩展程序"));
     const workspaces = host.querySelectorAll<HTMLElement>(".workspace-section");
@@ -89,14 +181,14 @@ describe("TabTree drag and drop", () => {
 
     const toWorkspace = new TestDataTransfer();
     await act(async () => dispatchDrag(source!, "dragstart", toWorkspace));
-    expect(JSON.parse(toWorkspace.getData("application/x-tab-fridge"))).toEqual({ type: "tab", id: "tab-a" });
+    expect(JSON.parse(toWorkspace.getData("application/x-tab-fridge"))).toEqual({ type: "tabs", ids: ["tab-a"], anchorId: "tab-a" });
     expect(workspaces[1].classList.contains("drop-zone-tab")).toBe(true);
 
     await act(async () => dispatchDrag(workspaces[1], "dragenter", toWorkspace));
     expect(workspaces[1].classList.contains("drag-active")).toBe(true);
     expect(workspaces[1].querySelector(".drop-guidance")?.textContent).toBe("松开移入");
     await act(async () => dispatchDrag(workspaces[1], "drop", toWorkspace));
-    expect(onMoveTab).toHaveBeenNthCalledWith(1, "tab-a", "ws-b");
+    expect(onMoveTabs).toHaveBeenNthCalledWith(1, ["tab-a"], "ws-b");
 
     const toUnclassified = new TestDataTransfer();
     await act(async () => dispatchDrag(source!, "dragstart", toUnclassified));
@@ -104,7 +196,7 @@ describe("TabTree drag and drop", () => {
     expect(unclassified).not.toBeNull();
     expect(unclassified?.classList.contains("drop-zone-tab")).toBe(true);
     await act(async () => dispatchDrag(unclassified!, "drop", toUnclassified));
-    expect(onMoveTab).toHaveBeenNthCalledWith(2, "tab-a", null);
+    expect(onMoveTabs).toHaveBeenNthCalledWith(2, ["tab-a"], null);
 
     await act(async () => root.unmount());
   });
@@ -125,11 +217,14 @@ describe("TabTree drag and drop", () => {
           expandedWindows={new Set(["window:1"])}
           expandedWorkspaces={new Set(["ws-a", "ws-b"])}
           selectedTabId={null}
+          checkedTabIds={new Set()}
           onToggleWindow={vi.fn()}
           onToggleWorkspace={vi.fn()}
           onActivateTab={vi.fn()}
-          onMoveTab={vi.fn()}
+          onCheckedTabIdsChange={vi.fn()}
+          onMoveTabs={vi.fn()}
           onMoveWorkspace={vi.fn()}
+          onRequestWorkspaceMerge={vi.fn()}
           onEditWorkspace={vi.fn()}
           onDeleteWorkspace={vi.fn()}
           onCreateWorkspace={vi.fn()}
@@ -148,6 +243,7 @@ describe("TabTree drag and drop", () => {
     document.body.append(host);
     const root = createRoot(host);
     const onMoveWorkspace = vi.fn();
+    const onRequestWorkspaceMerge = vi.fn();
     const twoWindowSnapshot: TabFridgeSnapshot = {
       windows: [
         ...snapshot.windows,
@@ -171,11 +267,14 @@ describe("TabTree drag and drop", () => {
           expandedWindows={new Set(["window:1", "window:2"])}
           expandedWorkspaces={new Set(["ws-a", "ws-b", "ws-c"])}
           selectedTabId={null}
+          checkedTabIds={new Set()}
           onToggleWindow={vi.fn()}
           onToggleWorkspace={vi.fn()}
           onActivateTab={vi.fn()}
-          onMoveTab={vi.fn()}
+          onCheckedTabIdsChange={vi.fn()}
+          onMoveTabs={vi.fn()}
           onMoveWorkspace={onMoveWorkspace}
+          onRequestWorkspaceMerge={onRequestWorkspaceMerge}
           onEditWorkspace={vi.fn()}
           onDeleteWorkspace={vi.fn()}
           onCreateWorkspace={vi.fn()}
@@ -185,17 +284,31 @@ describe("TabTree drag and drop", () => {
 
     const headings = host.querySelectorAll<HTMLButtonElement>(".workspace-heading");
     const sections = host.querySelectorAll<HTMLElement>(".workspace-section");
+    sections[1].getBoundingClientRect = () => ({ top: 0, height: 100, bottom: 100, left: 0, right: 100, width: 100, x: 0, y: 0, toJSON: () => ({}) });
+    sections[2].getBoundingClientRect = () => ({ top: 0, height: 100, bottom: 100, left: 0, right: 100, width: 100, x: 0, y: 0, toJSON: () => ({}) });
     const sameWindow = new TestDataTransfer();
     await act(async () => dispatchDrag(headings[0], "dragstart", sameWindow));
     expect(sections[1].classList.contains("drop-zone-workspace")).toBe(true);
-    await act(async () => dispatchDrag(sections[1], "drop", sameWindow));
+    await act(async () => dispatchDrag(sections[1], "dragover", sameWindow, 10));
+    expect(sections[1].classList.contains("workspace-drop-before")).toBe(true);
+    await act(async () => dispatchDrag(sections[1], "drop", sameWindow, 10));
     expect(onMoveWorkspace).toHaveBeenCalledWith("ws-a", "ws-b");
+
+    const afterTarget = new TestDataTransfer();
+    await act(async () => dispatchDrag(headings[0], "dragstart", afterTarget));
+    await act(async () => dispatchDrag(sections[1], "dragover", afterTarget, 90));
+    expect(sections[1].classList.contains("workspace-drop-after")).toBe(true);
+    await act(async () => dispatchDrag(sections[1], "drop", afterTarget, 90));
+    expect(onMoveWorkspace).toHaveBeenNthCalledWith(2, "ws-a", undefined);
 
     const crossWindow = new TestDataTransfer();
     await act(async () => dispatchDrag(headings[0], "dragstart", crossWindow));
-    expect(sections[2].classList.contains("drop-zone-workspace")).toBe(false);
-    await act(async () => dispatchDrag(sections[2], "drop", crossWindow));
-    expect(onMoveWorkspace).toHaveBeenCalledTimes(1);
+    expect(sections[2].classList.contains("drop-zone-workspace")).toBe(true);
+    await act(async () => dispatchDrag(sections[2], "dragover", crossWindow, 5));
+    expect(sections[2].classList.contains("workspace-drop-merge")).toBe(true);
+    await act(async () => dispatchDrag(sections[2], "drop", crossWindow, 5));
+    expect(onMoveWorkspace).toHaveBeenCalledTimes(2);
+    expect(onRequestWorkspaceMerge).toHaveBeenCalledWith("ws-a", "ws-c");
     await act(async () => root.unmount());
   });
 
@@ -220,11 +333,14 @@ describe("TabTree drag and drop", () => {
           expandedWindows={new Set(["window:1"])}
           expandedWorkspaces={new Set(["ws-a"])}
           selectedTabId={null}
+          checkedTabIds={new Set()}
           onToggleWindow={vi.fn()}
           onToggleWorkspace={vi.fn()}
           onActivateTab={vi.fn()}
-          onMoveTab={vi.fn()}
+          onCheckedTabIdsChange={vi.fn()}
+          onMoveTabs={vi.fn()}
           onMoveWorkspace={vi.fn()}
+          onRequestWorkspaceMerge={vi.fn()}
           onEditWorkspace={vi.fn()}
           onDeleteWorkspace={vi.fn()}
           onCreateWorkspace={vi.fn()}
@@ -241,7 +357,7 @@ describe("TabTree drag and drop", () => {
     expect(host.querySelector(".workspace-level")).toBeNull();
     expect(host.querySelector(".workspace-menu")).not.toBeNull();
 
-    const source = host.querySelector<HTMLButtonElement>("button.tab-row");
+    const source = host.querySelector<HTMLElement>(".tab-row");
     const transfer = new TestDataTransfer();
     await act(async () => dispatchDrag(source!, "dragstart", transfer));
     expect(host.querySelector(".unclassified-section.drop-zone-tab")).not.toBeNull();
@@ -270,11 +386,14 @@ describe("TabTree drag and drop", () => {
       expandedWindows: new Set(["window:1"]),
       expandedWorkspaces: new Set(["ws-a", "ws-b"]),
       selectedTabId: null,
+      checkedTabIds: new Set<string>(),
       onToggleWindow: vi.fn(),
       onToggleWorkspace: vi.fn(),
       onActivateTab: vi.fn(),
-      onMoveTab: vi.fn(),
+      onCheckedTabIdsChange: vi.fn(),
+      onMoveTabs: vi.fn(),
       onMoveWorkspace: vi.fn(),
+      onRequestWorkspaceMerge: vi.fn(),
       onEditWorkspace: vi.fn(),
       onDeleteWorkspace: vi.fn(),
       onCreateWorkspace: vi.fn()
@@ -286,7 +405,7 @@ describe("TabTree drag and drop", () => {
     expect(host.textContent).toContain("6 分钟前");
     await act(async () => { await setAppLanguage("en"); });
     expect(host.textContent).toContain("6 minutes ago");
-    expect(host.querySelector("button.tab-row")?.getAttribute("title")).toContain("Last visited: 6 minutes ago");
+    expect(host.querySelector(".tab-activate")?.getAttribute("title")).toContain("Last visited: 6 minutes ago");
     await act(async () => root.unmount());
   });
 });

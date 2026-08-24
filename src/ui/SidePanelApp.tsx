@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { CircleAlert, RefreshCw, Rows3, ScanLine, Search, Settings2, X } from "lucide-react";
-import type { OrganizationMode, OrganizationPreview, Workspace } from "../shared/contracts";
+import type { OrganizationMode, OrganizationPreview, Workspace, WorkspaceMergePreview } from "../shared/contracts";
 import { useTabFridgeState } from "../ui-state/useTabFridgeState";
 import { OrganizationDialog } from "./OrganizationDialog";
 import { TabTree, type TabFilter, type WindowScope } from "./TabTree";
 import { WorkspaceDialog } from "./WorkspaceDialog";
 import { useI18n } from "../i18n/react";
+import { WorkspaceMergeDialog } from "./WorkspaceMergeDialog";
 
 function manageUrl(): string {
   try {
@@ -31,9 +32,14 @@ export function SidePanelApp() {
   const [expandedWindows, setExpandedWindows] = useState<Set<string>>(new Set());
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(new Set());
   const [selectedTabId, setSelectedTabId] = useState<string | null>(null);
+  const [checkedTabIds, setCheckedTabIds] = useState<Set<string>>(new Set());
+  const [batchNotice, setBatchNotice] = useState<string | null>(null);
   const [workspaceDialog, setWorkspaceDialog] = useState<{ windowKey: string; workspace?: Workspace } | null>(null);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Workspace | null>(null);
+  const [mergePreview, setMergePreview] = useState<WorkspaceMergePreview | null>(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeError, setMergeError] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiMode, setAiMode] = useState<OrganizationMode>("purpose");
   const [aiPreview, setAiPreview] = useState<OrganizationPreview | null>(null);
@@ -54,6 +60,11 @@ export function SidePanelApp() {
       return next;
     });
   }, [snapshot.workspaces]);
+
+  useEffect(() => {
+    const existingIds = new Set(snapshot.tabs.filter((tab) => tab.kind !== "special").map((tab) => tab.id));
+    setCheckedTabIds((current) => new Set([...current].filter((id) => existingIds.has(id))));
+  }, [snapshot.tabs]);
 
   const currentKey = useMemo(() => currentWindowKey(snapshot.windows), [snapshot.windows]);
   const unclassifiedCount = snapshot.tabs.filter((tab) => tab.kind === "normal" && !tab.pinned && tab.workspaceId === null).length;
@@ -78,6 +89,35 @@ export function SidePanelApp() {
     const target = deleteTarget;
     setDeleteTarget(null);
     await state.deleteWorkspace(target.id);
+  };
+
+  const moveCheckedTabs = async (tabIds: string[], workspaceId: string | null) => {
+    setBatchNotice(null);
+    const outcome = await state.moveTabs(tabIds, workspaceId);
+    if (!outcome) return;
+    const remainingIds = new Set(outcome.tabs.map((tab) => tab.id));
+    setCheckedTabIds(new Set(outcome.skippedTabIds.filter((id) => remainingIds.has(id))));
+    if (outcome.skippedTabIds.length) {
+      setBatchNotice(t("tree.batchMoveSkipped", { moved: outcome.movedTabIds.length, skipped: outcome.skippedTabIds.length }));
+    }
+  };
+
+  const requestWorkspaceMerge = async (sourceWorkspaceId: string, targetWorkspaceId: string) => {
+    setMergeError(null);
+    const preview = await state.previewWorkspaceMerge(sourceWorkspaceId, targetWorkspaceId);
+    if (preview) setMergePreview(preview);
+    else setMergeError(t("error.mergePreviewFailed"));
+  };
+
+  const confirmWorkspaceMerge = async (preview: WorkspaceMergePreview) => {
+    setMergeBusy(true);
+    setMergeError(null);
+    const ok = await state.mergeWorkspaces(preview);
+    setMergeBusy(false);
+    if (ok) {
+      setMergePreview(null);
+      setCheckedTabIds((current) => new Set([...current].filter((id) => !preview.sourceTabIds.includes(id))));
+    } else setMergeError(t("error.mergeStateChanged"));
   };
 
   const openAi = () => {
@@ -158,6 +198,12 @@ export function SidePanelApp() {
           </button>
         </div>
       ) : null}
+      {batchNotice ? (
+        <div className="batch-notice" role="status">
+          <p>{batchNotice}</p>
+          <button type="button" onClick={() => setBatchNotice(null)} aria-label={t("common.close")}><X aria-hidden="true" size={14} /></button>
+        </div>
+      ) : null}
 
       <section className="tree-panel">
         {state.status === "loading" && !snapshot.tabs.length && !snapshot.windows.length ? (
@@ -175,6 +221,7 @@ export function SidePanelApp() {
             expandedWindows={expandedWindows}
             expandedWorkspaces={expandedWorkspaces}
             selectedTabId={selectedTabId}
+            checkedTabIds={checkedTabIds}
             onToggleWindow={(key) => setExpandedWindows((current) => {
               const next = new Set(current);
               if (next.has(key)) next.delete(key);
@@ -191,8 +238,10 @@ export function SidePanelApp() {
               setSelectedTabId(id);
               void state.activateTab(id);
             }}
-            onMoveTab={(tabId, workspaceId) => void state.moveTab(tabId, workspaceId)}
+            onCheckedTabIdsChange={setCheckedTabIds}
+            onMoveTabs={(tabIds, workspaceId) => void moveCheckedTabs(tabIds, workspaceId)}
             onMoveWorkspace={(workspaceId, beforeId) => void state.moveWorkspace(workspaceId, beforeId)}
+            onRequestWorkspaceMerge={(sourceId, targetId) => void requestWorkspaceMerge(sourceId, targetId)}
             onEditWorkspace={openEditWorkspace}
             onDeleteWorkspace={setDeleteTarget}
             onCreateWorkspace={openCreateWorkspace}
@@ -202,8 +251,11 @@ export function SidePanelApp() {
 
       <footer className="sidepanel-footer">
         <div className="footer-stat">
-          <span className="status-dot" aria-hidden="true" />
-          <span>{snapshot.tabs.length ? t("common.tabsCount", { count: snapshot.tabs.length }) : t("side.waitingTabs")}</span>
+          {checkedTabIds.size ? (
+            <><span>{t("tree.selectedCount", { count: checkedTabIds.size })}</span><button className="selection-clear" type="button" onClick={() => setCheckedTabIds(new Set())}>{t("tree.clearSelection")}</button></>
+          ) : (
+            <><span className="status-dot" aria-hidden="true" /><span>{snapshot.tabs.length ? t("common.tabsCount", { count: snapshot.tabs.length }) : t("side.waitingTabs")}</span></>
+          )}
         </div>
         <button className="button button-ai" type="button" onClick={openAi}>
           <ScanLine aria-hidden="true" size={16} />{t("side.aiOrganize")}
@@ -235,6 +287,16 @@ export function SidePanelApp() {
           </section>
         </div>
       ) : null}
+      <WorkspaceMergeDialog
+        preview={mergePreview}
+        source={snapshot.workspaces.find((workspace) => workspace.id === mergePreview?.sourceWorkspaceId)}
+        target={snapshot.workspaces.find((workspace) => workspace.id === mergePreview?.targetWorkspaceId)}
+        targetTabCount={snapshot.tabs.filter((tab) => tab.workspaceId === mergePreview?.targetWorkspaceId).length}
+        busy={mergeBusy}
+        error={mergeError}
+        onClose={() => { if (!mergeBusy) { setMergePreview(null); setMergeError(null); } }}
+        onConfirm={(preview) => void confirmWorkspaceMerge(preview)}
+      />
       <OrganizationDialog
         open={aiOpen}
         tabs={snapshot.tabs}

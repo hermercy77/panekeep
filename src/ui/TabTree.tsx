@@ -19,25 +19,34 @@ interface TabTreeProps {
   expandedWindows: Set<string>;
   expandedWorkspaces: Set<string>;
   selectedTabId: string | null;
+  checkedTabIds: Set<string>;
   onToggleWindow: (windowKey: string) => void;
   onToggleWorkspace: (workspaceId: string) => void;
   onActivateTab: (tabId: string) => void;
-  onMoveTab: (tabId: string, workspaceId: string | null) => void;
+  onCheckedTabIdsChange: (tabIds: Set<string>) => void;
+  onMoveTabs: (tabIds: string[], workspaceId: string | null) => void;
   onMoveWorkspace: (workspaceId: string, beforeWorkspaceId?: string) => void;
+  onRequestWorkspaceMerge: (sourceWorkspaceId: string, targetWorkspaceId: string) => void;
   onEditWorkspace: (workspace: Workspace) => void;
   onDeleteWorkspace: (workspace: Workspace) => void;
   onCreateWorkspace: (windowKey: string) => void;
 }
 
-type DragPayload = { type: "tab" | "workspace"; id: string };
+type DragPayload =
+  | { type: "tabs"; ids: string[]; anchorId: string }
+  | { type: "workspace"; id: string };
+type WorkspaceDropZone = "before" | "merge" | "after";
 type TabSectionKind = "fixed" | "unclassified" | "special";
 
 function parseDrag(event: DragEvent): DragPayload | null {
   const raw = event.dataTransfer.getData("application/x-tab-fridge");
   if (!raw) return null;
   try {
-    const data = JSON.parse(raw) as DragPayload;
-    return data.type && data.id ? data : null;
+    const data = JSON.parse(raw) as DragPayload | { type: "tab"; id: string };
+    if (data.type === "tab" && data.id) return { type: "tabs", ids: [data.id], anchorId: data.id };
+    if (data.type === "tabs" && Array.isArray(data.ids) && data.ids.length && data.anchorId) return data;
+    if (data.type === "workspace" && data.id) return data;
+    return null;
   } catch {
     return null;
   }
@@ -46,6 +55,31 @@ function parseDrag(event: DragEvent): DragPayload | null {
 function writeDrag(event: DragEvent, payload: DragPayload): void {
   event.dataTransfer.effectAllowed = "move";
   event.dataTransfer.setData("application/x-tab-fridge", JSON.stringify(payload));
+}
+
+function setBatchDragImage(event: DragEvent, title: string, count: number): void {
+  if (typeof event.dataTransfer.setDragImage !== "function" || typeof document === "undefined") return;
+  const ghost = document.createElement("div");
+  ghost.className = "tab-drag-ghost";
+  const titleElement = document.createElement("span");
+  titleElement.className = "tab-drag-ghost-title";
+  titleElement.textContent = title;
+  const countElement = document.createElement("span");
+  countElement.className = "tab-drag-ghost-count";
+  countElement.textContent = String(count);
+  ghost.append(titleElement, countElement);
+  document.body.append(ghost);
+  event.dataTransfer.setDragImage(ghost, 22, 18);
+  window.setTimeout(() => ghost.remove(), 0);
+}
+
+function workspaceDropZone(event: DragEvent, crossWindow: boolean): WorkspaceDropZone {
+  if (crossWindow) return "merge";
+  const bounds = event.currentTarget.getBoundingClientRect();
+  const ratio = bounds.height > 0 ? (event.clientY - bounds.top) / bounds.height : 0.5;
+  if (ratio < 0.25) return "before";
+  if (ratio > 0.75) return "after";
+  return "merge";
 }
 
 function tabMatches(tab: TabRecord, query: string, filter: TabFilter): boolean {
@@ -89,17 +123,21 @@ function Favicon({ tab }: { tab: TabRecord }) {
 function TabRow({
   tab,
   now,
-  selected,
+  active,
+  checked,
   dragging,
   onActivate,
+  onToggleChecked,
   onDragStart,
   onDragEnd
 }: {
   tab: TabRecord;
   now: number;
-  selected: boolean;
+  active: boolean;
+  checked: boolean;
   dragging: boolean;
   onActivate: () => void;
+  onToggleChecked: (shiftKey: boolean) => void;
   onDragStart: (event: DragEvent) => void;
   onDragEnd: (event: DragEvent) => void;
 }) {
@@ -119,22 +157,40 @@ function TabRow({
   })();
   const lastVisitedLabel = lastVisited ? t("tab.lastVisited", { time: lastVisited }) : null;
   return (
-    <button
-      className={`tab-row${selected ? " selected" : ""}${dragging ? " dragging-source" : ""}`}
-      type="button"
+    <div
+      className={`tab-row${active ? " selected" : ""}${checked ? " checked" : ""}${dragging ? " dragging-source" : ""}`}
+      data-tab-id={tab.id}
       draggable={canDrag}
       onDragStart={canDrag ? onDragStart : undefined}
       onDragEnd={canDrag ? onDragEnd : undefined}
-      onClick={onActivate}
-      title={[tabLabel(tab), tab.url, tab.specialReason, lastVisitedLabel].filter(Boolean).join("\n")}
     >
-      <Favicon tab={tab} />
-      <span className="tab-copy">
-        <span className="tab-title">{tabLabel(tab)}</span>
-        <span className="tab-host">{tabHost(tab)}</span>
-        {lastVisited ? <span className="tab-last-visited">{lastVisited}</span> : null}
-      </span>
-    </button>
+      <input
+        className="tab-checkbox"
+        type="checkbox"
+        checked={checked}
+        disabled={!canDrag}
+        readOnly
+        aria-label={canDrag ? t("tree.selectTab", { name: tabLabel(tab) }) : t("tree.specialNotSelectable")}
+        title={canDrag ? t("tree.selectTab", { name: tabLabel(tab) }) : t("tree.specialNotSelectable")}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggleChecked(event.shiftKey);
+        }}
+      />
+      <button
+        className="tab-activate"
+        type="button"
+        onClick={onActivate}
+        title={[tabLabel(tab), tab.url, tab.specialReason, lastVisitedLabel].filter(Boolean).join("\n")}
+      >
+        <Favicon tab={tab} />
+        <span className="tab-copy">
+          <span className="tab-title">{tabLabel(tab)}</span>
+          <span className="tab-host">{tabHost(tab)}</span>
+          {lastVisited ? <span className="tab-last-visited">{lastVisited}</span> : null}
+        </span>
+      </button>
+    </div>
   );
 }
 
@@ -189,11 +245,14 @@ export function TabTree({
   expandedWindows,
   expandedWorkspaces,
   selectedTabId,
+  checkedTabIds,
   onToggleWindow,
   onToggleWorkspace,
   onActivateTab,
-  onMoveTab,
+  onCheckedTabIdsChange,
+  onMoveTabs,
   onMoveWorkspace,
+  onRequestWorkspaceMerge,
   onEditWorkspace,
   onDeleteWorkspace,
   onCreateWorkspace
@@ -203,6 +262,7 @@ export function TabTree({
   const [collapsedTabSections, setCollapsedTabSections] = useState<Set<string>>(new Set());
   const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
   const [activeDropTarget, setActiveDropTarget] = useState<string | null>(null);
+  const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(null);
   const activeDropTargetRef = useRef<string | null>(null);
   const workspaceExpandTimerRef = useRef<number | null>(null);
   useEffect(() => {
@@ -214,6 +274,41 @@ export function TabTree({
     const keys = [...new Set(snapshot.tabs.map((tab) => tab.windowKey))];
     return keys.map((key, index) => ({ key, nativeId: 0, name: "", order: index, isCurrent: index === 0, expanded: true }));
   }, [snapshot.tabs, snapshot.windows]);
+  const visibleSelectableTabIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const window of windows.filter((item) => windowScope === "all" || item.isCurrent)) {
+      if (!expandedWindows.has(window.key)) continue;
+      const windowTabs = snapshot.tabs.filter((tab) => tab.windowKey === window.key);
+      const workspaces = sortWorkspaces(snapshot.workspaces.filter(
+        (workspace) => workspace.windowKey === window.key && workspaceTagMatches(workspace, workspaceTag)
+      )).filter((workspace) => {
+        if (!query.trim()) return true;
+        if (workspaceMatches(workspace, query, workspaceTag)) return true;
+        return windowTabs.some((tab) => tab.workspaceId === workspace.id && tabMatches(tab, query, filter));
+      });
+      for (const workspace of workspaces) {
+        if (!expandedWorkspaces.has(workspace.id)) continue;
+        const workspaceNameMatches = workspaceMatches(workspace, query, workspaceTag);
+        ids.push(...windowTabs
+          .filter((tab) => tab.workspaceId === workspace.id && tab.kind !== "special" && !tab.pinned)
+          .filter((tab) => !query.trim() || workspaceNameMatches || tabMatches(tab, query, filter))
+          .map((tab) => tab.id));
+      }
+      if (!collapsedTabSections.has(`${window.key}:unclassified`)) {
+        ids.push(...windowTabs
+          .filter((tab) => tab.kind === "normal" && !tab.pinned && tab.workspaceId === null)
+          .filter((tab) => tabMatches(tab, query, filter))
+          .map((tab) => tab.id));
+      }
+      if (!collapsedTabSections.has(`${window.key}:fixed`)) {
+        ids.push(...windowTabs
+          .filter((tab) => tab.kind !== "special" && (tab.pinned || tab.kind === "fixed"))
+          .filter((tab) => tabMatches(tab, query, filter))
+          .map((tab) => tab.id));
+      }
+    }
+    return ids;
+  }, [collapsedTabSections, expandedWindows, expandedWorkspaces, filter, query, snapshot.tabs, snapshot.workspaces, windowScope, windows, workspaceTag]);
   const visibleTabCount = snapshot.tabs.filter((tab) => tabMatches(tab, query, filter)).length;
   const visibleWorkspaceCount = snapshot.workspaces.filter((workspace) => workspaceMatches(workspace, query, workspaceTag)).length;
   const sectionExpanded = (windowKey: string, kind: TabSectionKind) => !collapsedTabSections.has(`${windowKey}:${kind}`);
@@ -225,6 +320,21 @@ export function TabTree({
       else next.add(key);
       return next;
     });
+  };
+  const toggleCheckedTab = (tabId: string, shiftKey: boolean) => {
+    const next = new Set(checkedTabIds);
+    if (shiftKey && selectionAnchorId) {
+      const anchorIndex = visibleSelectableTabIds.indexOf(selectionAnchorId);
+      const targetIndex = visibleSelectableTabIds.indexOf(tabId);
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const [start, end] = anchorIndex <= targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex];
+        for (const id of visibleSelectableTabIds.slice(start, end + 1)) next.add(id);
+      } else if (next.has(tabId)) next.delete(tabId);
+      else next.add(tabId);
+    } else if (next.has(tabId)) next.delete(tabId);
+    else next.add(tabId);
+    setSelectionAnchorId(tabId);
+    onCheckedTabIdsChange(next);
   };
 
   useEffect(() => () => {
@@ -255,6 +365,19 @@ export function TabTree({
     setDragPayload(payload);
     setDropTarget(null);
   };
+  const beginTabDrag = (event: DragEvent, tab: TabRecord) => {
+    const selectedMovableIds = [...checkedTabIds].filter((id) => {
+      const selectedTab = snapshot.tabs.find((item) => item.id === id);
+      return selectedTab && selectedTab.kind !== "special";
+    });
+    const ids = checkedTabIds.has(tab.id) && selectedMovableIds.length ? selectedMovableIds : [tab.id];
+    if (!checkedTabIds.has(tab.id)) {
+      onCheckedTabIdsChange(new Set([tab.id]));
+      setSelectionAnchorId(tab.id);
+    }
+    setBatchDragImage(event, tabLabel(tab), ids.length);
+    beginDrag(event, { type: "tabs", ids, anchorId: tab.id });
+  };
 
   const activateDropTarget = (event: DragEvent, target: string) => {
     event.preventDefault();
@@ -278,16 +401,32 @@ export function TabTree({
     }, 600);
   };
 
-  const draggedTab = dragPayload?.type === "tab" ? snapshot.tabs.find((tab) => tab.id === dragPayload.id) : undefined;
+  const draggedTabs = dragPayload?.type === "tabs"
+    ? dragPayload.ids.map((id) => snapshot.tabs.find((tab) => tab.id === id)).filter((tab): tab is TabRecord => Boolean(tab))
+    : [];
   const draggedWorkspace = dragPayload?.type === "workspace" ? snapshot.workspaces.find((workspace) => workspace.id === dragPayload.id) : undefined;
-  const canMoveDraggedTab = dragPayload?.type === "tab" && draggedTab !== undefined && draggedTab.kind !== "special";
-  const canMoveDraggedTabToUnclassified = canMoveDraggedTab && draggedTab.workspaceId !== null;
-  const tabDropGuidance = draggedTab?.pinned ? t("tree.unpinAndMove") : t("tree.dropToMove");
+  const canMoveDraggedTabs = dragPayload?.type === "tabs" && draggedTabs.some((tab) => tab.kind !== "special");
+  const canMoveDraggedTabsToUnclassified = canMoveDraggedTabs && draggedTabs.some((tab) => tab.kind === "normal" && !tab.pinned && tab.workspaceId !== null);
+  const tabDropGuidance = draggedTabs.some((tab) => tab.pinned) ? t("tree.unpinAndMove") : t("tree.dropToMove");
+  const renderTabRow = (tab: TabRecord) => (
+    <TabRow
+      key={tab.id}
+      tab={tab}
+      now={timeNow}
+      active={selectedTabId === tab.id}
+      checked={checkedTabIds.has(tab.id)}
+      dragging={dragPayload?.type === "tabs" && dragPayload.ids.includes(tab.id)}
+      onActivate={() => onActivateTab(tab.id)}
+      onToggleChecked={(shiftKey) => toggleCheckedTab(tab.id, shiftKey)}
+      onDragStart={(event) => beginTabDrag(event, tab)}
+      onDragEnd={finishDrag}
+    />
+  );
 
   return (
     <div className={`tree${dragPayload ? ` dragging-${dragPayload.type}` : ""}`} aria-label={t("tree.label")}>
       <span className="sr-only" aria-live="polite">
-        {dragPayload?.type === "tab" ? t("tree.movingTab") : dragPayload?.type === "workspace" ? t("tree.movingWorkspace") : ""}
+        {dragPayload?.type === "tabs" ? t("tree.movingTabs", { count: dragPayload.ids.length }) : dragPayload?.type === "workspace" ? t("tree.movingWorkspace") : ""}
       </span>
       {!windows.length || (!visibleTabCount && !visibleWorkspaceCount) ? <EmptyTree query={query} filter={filter} /> : null}
       {windows.filter((window) => windowScope === "all" || window.isCurrent).map((window, windowIndex) => {
@@ -304,7 +443,10 @@ export function TabTree({
         const unclassifiedExpanded = sectionExpanded(window.key, "unclassified");
         const specialExpanded = sectionExpanded(window.key, "special");
         const fixedExpanded = sectionExpanded(window.key, "fixed");
-        const canDropIntoWindowUnclassified = canMoveDraggedTabToUnclassified && draggedTab.windowKey === window.key;
+        const normalDraggedTabs = draggedTabs.filter((tab) => tab.kind === "normal" && !tab.pinned);
+        const canDropIntoWindowUnclassified = canMoveDraggedTabsToUnclassified
+          && normalDraggedTabs.length > 0
+          && normalDraggedTabs.every((tab) => tab.windowKey === window.key);
         const showUnclassified = true;
         const showSpecial = true;
         const showFixed = true;
@@ -330,34 +472,64 @@ export function TabTree({
                     .filter((tab) => !query.trim() || workspaceNameMatches || tabMatches(tab, query, filter));
                   const workspaceExpanded = expandedWorkspaces.has(workspace.id);
                   const workspaceDropTarget = `workspace:${workspace.id}`;
-                  const acceptsTab = canMoveDraggedTab && draggedTab.workspaceId !== workspace.id;
+                  const acceptsTab = canMoveDraggedTabs && draggedTabs.some((tab) => tab.workspaceId !== workspace.id || tab.pinned || tab.kind === "fixed");
                   const acceptsWorkspace = dragPayload?.type === "workspace"
-                    && dragPayload.id !== workspace.id
-                    && draggedWorkspace?.windowKey === workspace.windowKey;
+                    && dragPayload.id !== workspace.id;
                   const acceptsDrop = acceptsTab || acceptsWorkspace;
+                  const activeWorkspaceTarget = activeDropTarget?.startsWith(`${workspaceDropTarget}:`) === true;
+                  const activeWorkspaceZone = activeWorkspaceTarget
+                    ? activeDropTarget?.slice(`${workspaceDropTarget}:`.length) as WorkspaceDropZone | "tabs"
+                    : undefined;
                   return (
                     <div
-                      className={`tree-section workspace-section workspace-accent-${workspaceColorClass(workspace.color)}${acceptsTab ? " drop-zone-tab" : ""}${acceptsWorkspace ? " drop-zone-workspace" : ""}${activeDropTarget === workspaceDropTarget ? " drag-active" : ""}${dragPayload?.type === "workspace" && dragPayload.id === workspace.id ? " dragging-source" : ""}`}
+                      className={`tree-section workspace-section workspace-accent-${workspaceColorClass(workspace.color)}${acceptsTab ? " drop-zone-tab" : ""}${acceptsWorkspace ? " drop-zone-workspace" : ""}${activeWorkspaceTarget ? " drag-active" : ""}${activeWorkspaceZone ? ` workspace-drop-${activeWorkspaceZone}` : ""}${dragPayload?.type === "workspace" && dragPayload.id === workspace.id ? " dragging-source" : ""}`}
                       data-level="workspace"
+                      data-workspace-id={workspace.id}
+                      data-drop-zone={activeWorkspaceZone && activeWorkspaceZone !== "tabs" ? activeWorkspaceZone : undefined}
                       key={workspace.id}
                       onDragEnter={(event) => {
                         if (!acceptsDrop) return;
-                        activateDropTarget(event, workspaceDropTarget);
-                        if (acceptsTab) scheduleWorkspaceExpand(workspace.id, workspaceDropTarget, workspaceExpanded);
+                        if (acceptsWorkspace && dragPayload?.type === "workspace") {
+                          const zone = workspaceDropZone(event, draggedWorkspace?.windowKey !== workspace.windowKey);
+                          activateDropTarget(event, `${workspaceDropTarget}:${zone}`);
+                        } else {
+                          activateDropTarget(event, `${workspaceDropTarget}:tabs`);
+                          if (acceptsTab) scheduleWorkspaceExpand(workspace.id, `${workspaceDropTarget}:tabs`, workspaceExpanded);
+                        }
                       }}
                       onDragOver={(event) => {
                         if (!acceptsDrop) return;
-                        activateDropTarget(event, workspaceDropTarget);
+                        if (acceptsWorkspace && dragPayload?.type === "workspace") {
+                          const zone = workspaceDropZone(event, draggedWorkspace?.windowKey !== workspace.windowKey);
+                          activateDropTarget(event, `${workspaceDropTarget}:${zone}`);
+                        } else activateDropTarget(event, `${workspaceDropTarget}:tabs`);
                       }}
-                      onDragLeave={(event) => leaveDropTarget(event, workspaceDropTarget)}
+                      onDragLeave={(event) => {
+                        const next = event.relatedTarget;
+                        if (next instanceof Node && event.currentTarget.contains(next)) return;
+                        if (activeDropTargetRef.current?.startsWith(`${workspaceDropTarget}:`)) setDropTarget(null);
+                        clearWorkspaceExpandTimer();
+                      }}
                       onDrop={(event) => {
                         if (!acceptsDrop) return;
                         event.preventDefault();
                         event.stopPropagation();
                         const payload = parseDrag(event) ?? dragPayload;
                         if (!payload) return;
-                        if (payload.type === "tab") onMoveTab(payload.id, workspace.id);
-                        if (payload.type === "workspace" && payload.id !== workspace.id) onMoveWorkspace(payload.id, workspace.id);
+                        if (payload.type === "tabs") onMoveTabs(payload.ids, workspace.id);
+                        if (payload.type === "workspace" && payload.id !== workspace.id) {
+                          const source = snapshot.workspaces.find((candidate) => candidate.id === payload.id);
+                          const zone = activeWorkspaceZone && activeWorkspaceZone !== "tabs"
+                            ? activeWorkspaceZone
+                            : workspaceDropZone(event, source?.windowKey !== workspace.windowKey);
+                          if (zone === "merge") onRequestWorkspaceMerge(payload.id, workspace.id);
+                          else {
+                            const siblings = sortWorkspaces(snapshot.workspaces.filter((candidate) => candidate.windowKey === workspace.windowKey && candidate.id !== payload.id));
+                            const targetIndex = siblings.findIndex((candidate) => candidate.id === workspace.id);
+                            const beforeId = zone === "before" ? workspace.id : siblings[targetIndex + 1]?.id;
+                            onMoveWorkspace(payload.id, beforeId);
+                          }
+                        }
                         finishDrag();
                       }}
                     >
@@ -399,12 +571,15 @@ export function TabTree({
                         {workspace.description ? <span className="description-tooltip">{workspace.description}</span> : null}
                       </div>
                       <span className="drop-guidance" aria-hidden="true">{tabDropGuidance}</span>
+                      {acceptsWorkspace && activeWorkspaceZone && activeWorkspaceZone !== "tabs" ? (
+                        <span className="workspace-drop-guidance" aria-hidden="true">
+                          {activeWorkspaceZone === "merge" ? t("tree.mergeHere") : activeWorkspaceZone === "before" ? t("tree.moveBefore") : t("tree.moveAfter")}
+                        </span>
+                      ) : null}
                       {workspaceExpanded ? (
                         <div className="workspace-tabs drop-target">
                           {workspaceTabs.length ? (
-                            workspaceTabs.map((tab) => (
-                              <TabRow key={tab.id} tab={tab} now={timeNow} selected={selectedTabId === tab.id} dragging={dragPayload?.type === "tab" && dragPayload.id === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
-                            ))
+                            workspaceTabs.map(renderTabRow)
                           ) : (
                             <div className="drop-placeholder">{t("tree.dropHere")}</div>
                           )}
@@ -432,7 +607,7 @@ export function TabTree({
                     event.preventDefault();
                     event.stopPropagation();
                     const payload = parseDrag(event) ?? dragPayload;
-                    if (payload?.type === "tab") onMoveTab(payload.id, null);
+                    if (payload?.type === "tabs") onMoveTabs(payload.ids, null);
                     finishDrag();
                   }}
                 >
@@ -445,9 +620,7 @@ export function TabTree({
                     onToggle={() => toggleSection(window.key, "unclassified")}
                   />
                   <span className="drop-guidance" aria-hidden="true">{t("tree.dropBackUnclassified")}</span>
-                  {unclassifiedExpanded ? unclassified.map((tab) => (
-                    <TabRow key={tab.id} tab={tab} now={timeNow} selected={selectedTabId === tab.id} dragging={dragPayload?.type === "tab" && dragPayload.id === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
-                  )) : null}
+                  {unclassifiedExpanded ? unclassified.map(renderTabRow) : null}
                 </div> : null}
                 {showSpecial ? <div className="tree-section">
                   <SectionHeading
@@ -458,9 +631,7 @@ export function TabTree({
                     expanded={specialExpanded}
                     onToggle={() => toggleSection(window.key, "special")}
                   />
-                  {specialExpanded ? specialTabs.map((tab) => (
-                    <TabRow key={tab.id} tab={tab} now={timeNow} selected={selectedTabId === tab.id} dragging={false} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
-                  )) : null}
+                  {specialExpanded ? specialTabs.map(renderTabRow) : null}
                 </div> : null}
                 {showFixed ? <div className="tree-section">
                   <SectionHeading
@@ -471,9 +642,7 @@ export function TabTree({
                     expanded={fixedExpanded}
                     onToggle={() => toggleSection(window.key, "fixed")}
                   />
-                  {fixedExpanded ? fixedTabs.map((tab) => (
-                    <TabRow key={tab.id} tab={tab} now={timeNow} selected={selectedTabId === tab.id} dragging={dragPayload?.type === "tab" && dragPayload.id === tab.id} onActivate={() => onActivateTab(tab.id)} onDragStart={(event) => beginDrag(event, { type: "tab", id: tab.id })} onDragEnd={finishDrag} />
-                  )) : null}
+                  {fixedExpanded ? fixedTabs.map(renderTabRow) : null}
                 </div> : null}
               </div>
             ) : null}

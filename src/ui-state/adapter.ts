@@ -2,7 +2,8 @@ import type {
   OrganizationMode,
   OrganizationPreview,
   TabRecord,
-  Workspace
+  Workspace,
+  WorkspaceMergePreview
 } from "../shared/contracts";
 import { UI_MESSAGE_SOURCE, isStateUpdatedMessage } from "../shared/messages";
 import {
@@ -17,6 +18,8 @@ import {
 import { getAppLanguage, translate, type MessageKey } from "../i18n";
 import type { BackupImportResult } from "../shared/backup";
 import { normalizeWorkspaceIcon } from "../shared/workspaceAppearance";
+import type { MoveTabsResponse } from "../shared/messages";
+import { createWorkspaceMergePreview } from "../shared/workspaceMerge";
 
 const DEFAULT_WORKSPACE_COLOR = "slate";
 export const ORGANIZATION_PREVIEW_BATCH_SIZE = 50;
@@ -167,15 +170,43 @@ function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabF
       };
       publish();
     },
-    async moveTab(tabId, workspaceId) {
+    async moveTabs(tabIds, workspaceId) {
       if (workspaceId && !snapshot.workspaces.some((workspace) => workspace.id === workspaceId)) {
         throw new Error(tr("error.targetWorkspaceMissing"));
       }
+      const requested = [...new Set(tabIds)];
+      const targetWorkspace = workspaceId ? snapshot.workspaces.find((workspace) => workspace.id === workspaceId) : undefined;
+      const movedTabIds: string[] = [];
+      const skippedTabIds: string[] = [];
+      const nextTabs = snapshot.tabs.map((tab) => {
+        if (!requested.includes(tab.id)) return tab;
+        const allowed = workspaceId === null
+          ? tab.kind === "normal" && !tab.pinned
+          : tab.kind === "normal" || tab.kind === "fixed";
+        if (!allowed) {
+          skippedTabIds.push(tab.id);
+          return tab;
+        }
+        movedTabIds.push(tab.id);
+        return {
+          ...tab,
+          workspaceId,
+          ...(targetWorkspace ? { windowKey: targetWorkspace.windowKey } : {}),
+          ...(workspaceId && (tab.pinned || tab.kind === "fixed") ? { pinned: false, kind: "normal" as const } : {})
+        };
+      });
+      for (const id of requested) {
+        if (!movedTabIds.includes(id) && !skippedTabIds.includes(id)) skippedTabIds.push(id);
+      }
       snapshot = {
         ...snapshot,
-        tabs: snapshot.tabs.map((tab) => (tab.id === tabId ? { ...tab, workspaceId } : tab))
+        tabs: nextTabs
       };
       publish();
+      return { ...cloneSnapshot(snapshot), movedTabIds, skippedTabIds };
+    },
+    async moveTab(tabId, workspaceId) {
+      await this.moveTabs([tabId], workspaceId);
     },
     async moveWorkspace(workspaceId, beforeWorkspaceId) {
       const source = snapshot.workspaces.find((workspace) => workspace.id === workspaceId);
@@ -192,6 +223,27 @@ function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabF
             ? { ...workspace, order: orderById.get(workspace.id) ?? workspace.order, updatedAt: now() }
             : workspace
         )
+      };
+      publish();
+    },
+    async previewWorkspaceMerge(sourceWorkspaceId, targetWorkspaceId) {
+      const source = snapshot.workspaces.find((workspace) => workspace.id === sourceWorkspaceId);
+      const target = snapshot.workspaces.find((workspace) => workspace.id === targetWorkspaceId);
+      if (!source || !target || source.id === target.id) throw new Error(tr("error.mergeTargetInvalid"));
+      const sourceTabs = snapshot.tabs.filter((tab) => tab.workspaceId === source.id && tab.kind !== "special");
+      return createWorkspaceMergePreview(source, target, sourceTabs);
+    },
+    async mergeWorkspaces(preview) {
+      const current = await this.previewWorkspaceMerge(preview.sourceWorkspaceId, preview.targetWorkspaceId);
+      if (JSON.stringify(current) !== JSON.stringify(preview)) throw new Error(tr("error.mergeStateChanged"));
+      const target = snapshot.workspaces.find((workspace) => workspace.id === preview.targetWorkspaceId);
+      if (!target) throw new Error(tr("error.workspaceNotFound"));
+      snapshot = {
+        ...snapshot,
+        workspaces: snapshot.workspaces.filter((workspace) => workspace.id !== preview.sourceWorkspaceId),
+        tabs: snapshot.tabs.map((tab) => preview.sourceTabIds.includes(tab.id)
+          ? { ...tab, workspaceId: target.id, windowKey: target.windowKey, pinned: false, kind: "normal" as const }
+          : tab)
       };
       publish();
     },
@@ -306,9 +358,25 @@ export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdap
       const result = await bridge("tab.move", { tabId, workspaceId });
       if (result === undefined) await callFallback((adapter) => adapter.moveTab(tabId, workspaceId));
     },
+    async moveTabs(tabIds, workspaceId) {
+      const result = await bridge("tabs.move", { tabIds, workspaceId });
+      if (result && typeof result === "object" && "movedTabIds" in result && "skippedTabIds" in result) {
+        return result as MoveTabsResponse;
+      }
+      return callFallback((adapter) => adapter.moveTabs(tabIds, workspaceId));
+    },
     async moveWorkspace(workspaceId, beforeWorkspaceId) {
       const result = await bridge("workspace.move", { workspaceId, beforeWorkspaceId });
       if (result === undefined) await callFallback((adapter) => adapter.moveWorkspace(workspaceId, beforeWorkspaceId));
+    },
+    async previewWorkspaceMerge(sourceWorkspaceId, targetWorkspaceId) {
+      const result = await bridge("workspace.merge.preview", { sourceWorkspaceId, targetWorkspaceId });
+      if (result && typeof result === "object" && "sourceFingerprint" in result) return result as WorkspaceMergePreview;
+      return callFallback((adapter) => adapter.previewWorkspaceMerge(sourceWorkspaceId, targetWorkspaceId));
+    },
+    async mergeWorkspaces(preview) {
+      const result = await bridge("workspace.merge", { preview });
+      if (result === undefined) await callFallback((adapter) => adapter.mergeWorkspaces(preview));
     },
     async activateTab(tabId) {
       const result = await bridge("tab.activate", { tabId });

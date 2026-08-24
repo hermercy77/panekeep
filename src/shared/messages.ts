@@ -1,4 +1,4 @@
-import type { Backup, OrganizationMode, TabRecord, Workspace } from "./contracts";
+import type { Backup, OrganizationMode, TabRecord, Workspace, WorkspaceMergePreview } from "./contracts";
 
 export const UI_MESSAGE_SOURCE = "tab-fridge-ui" as const;
 export const BACKGROUND_MESSAGE_SOURCE = "tab-fridge-background" as const;
@@ -12,6 +12,7 @@ export const MESSAGE_TYPES = {
   createWorkspace: "tab-fridge/create-workspace",
   updateWorkspace: "tab-fridge/update-workspace",
   deleteWorkspace: "tab-fridge/delete-workspace",
+  mergeWorkspaces: "tab-fridge/merge-workspaces",
   moveTabs: "tab-fridge/move-tabs",
   ungroupTabs: "tab-fridge/ungroup-tabs",
   closeEmptyWindows: "tab-fridge/close-empty-windows"
@@ -30,14 +31,16 @@ export type BackgroundRequest =
       description?: string;
       tags?: string[];
       color?: string;
+      icon?: Workspace["icon"];
       tabIds?: string[];
     }
   | {
       type: typeof MESSAGE_TYPES.updateWorkspace;
       workspaceId: string;
-      patch: Partial<Pick<Workspace, "name" | "description" | "tags" | "color" | "order">>;
+      patch: Partial<Pick<Workspace, "name" | "description" | "tags" | "color" | "icon" | "order">>;
     }
   | { type: typeof MESSAGE_TYPES.deleteWorkspace; workspaceId: string }
+  | { type: typeof MESSAGE_TYPES.mergeWorkspaces; preview: WorkspaceMergePreview }
   | {
       type: typeof MESSAGE_TYPES.moveTabs;
       tabIds: string[];

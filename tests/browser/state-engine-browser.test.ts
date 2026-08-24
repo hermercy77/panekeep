@@ -207,6 +207,121 @@ function tab(id: number, windowId: number, options: Partial<NativeTab> = {}): Na
 }
 
 describe("BrowserStateEngine with Chromium state", () => {
+  it("moves valid batch members, reports skipped tabs, and treats tabs already at the target as successful", async () => {
+    const fake = new FakeBrowser([
+      {
+        id: 1,
+        type: "normal",
+        focused: true,
+        tabs: [
+          tab(101, 1, { groupId: 10, active: true }),
+          tab(102, 1, { groupId: -1, index: 1 }),
+          tab(103, 1, { groupId: -1, index: 2, url: "chrome://extensions/" }),
+          tab(104, 1, { groupId: -1, index: 3, pinned: true })
+        ]
+      }
+    ], [{ id: 10, windowId: 1, title: "Target", color: "blue" }]);
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+    const workspace = engine.getState().workspaces[0];
+
+    const result = await engine.moveTabs({ tabIds: ["101", "102", "103", "missing"], workspaceId: workspace.id });
+
+    expect(result.movedTabIds).toEqual(["101", "102"]);
+    expect(result.skippedTabIds).toEqual(["103", "missing"]);
+    expect(engine.getState().tabs.find((item) => item.id === "102")?.workspaceId).toBe(workspace.id);
+    const unclassified = await engine.moveTabs({ tabIds: ["102", "104"], workspaceId: null });
+    expect(unclassified.movedTabIds).toEqual(["102"]);
+    expect(unclassified.skippedTabIds).toEqual(["104"]);
+    await engine.stop();
+  });
+
+  it("merges workspaces across windows, preserves target metadata, deletes the source, and closes its empty window", async () => {
+    const fake = new FakeBrowser([
+      { id: 1, type: "normal", focused: false, tabs: [tab(101, 1, { groupId: 10 }), tab(102, 1, { groupId: 10, index: 1 })] },
+      { id: 2, type: "normal", focused: true, tabs: [tab(201, 2, { groupId: 20, active: true })] }
+    ], [
+      { id: 10, windowId: 1, title: "Source", color: "red" },
+      { id: 20, windowId: 2, title: "Target", color: "blue" }
+    ]);
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+    const source = engine.getState().workspaces.find((workspace) => workspace.groupId === 10)!;
+    const target = engine.getState().workspaces.find((workspace) => workspace.groupId === 20)!;
+    await engine.updateWorkspace(target.id, { description: "Keep me", tags: ["target"], icon: "briefcase" });
+    const targetBefore = engine.getState().workspaces.find((workspace) => workspace.id === target.id)!;
+    const preview = engine.createWorkspaceMergePreview(source.id, target.id);
+
+    await engine.mergeWorkspaces(preview);
+
+    expect(engine.getState().workspaces).toHaveLength(1);
+    expect(engine.getState().workspaces[0]).toMatchObject({
+      id: target.id,
+      name: targetBefore.name,
+      description: "Keep me",
+      tags: ["target"],
+      color: targetBefore.color,
+      icon: "briefcase"
+    });
+    expect(engine.getState().tabs.map((item) => item.workspaceId)).toEqual([target.id, target.id, target.id]);
+    expect(engine.getState().tabs.map((item) => item.windowKey)).toEqual([target.windowKey, target.windowKey, target.windowKey]);
+    expect(fake.removedWindowIds).toContain(1);
+    await engine.stop();
+  });
+
+  it("rejects a stale workspace merge preview before moving any tab", async () => {
+    const fake = new FakeBrowser([
+      { id: 1, type: "normal", focused: true, tabs: [tab(101, 1, { groupId: 10 })] },
+      { id: 2, type: "normal", focused: false, tabs: [tab(201, 2, { groupId: 20 })] }
+    ], [
+      { id: 10, windowId: 1, title: "Source", color: "red" },
+      { id: 20, windowId: 2, title: "Target", color: "blue" }
+    ]);
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+    const source = engine.getState().workspaces.find((workspace) => workspace.groupId === 10)!;
+    const target = engine.getState().workspaces.find((workspace) => workspace.groupId === 20)!;
+    const preview = engine.createWorkspaceMergePreview(source.id, target.id);
+    fake.windows[0].tabs[0].url = "https://changed.example.test/";
+    await engine.syncFromBrowser();
+
+    await expect(engine.mergeWorkspaces(preview)).rejects.toThrow("工作区或标签已发生变化");
+    expect(fake.windows[0].tabs[0]).toMatchObject({ id: 101, windowId: 1, groupId: 10 });
+    expect(fake.windows[1].tabs[0]).toMatchObject({ id: 201, windowId: 2, groupId: 20 });
+    await engine.stop();
+  });
+
+  it("rolls back every native change when a workspace merge fails midway", async () => {
+    const fake = new FakeBrowser([
+      { id: 1, type: "normal", focused: true, tabs: [tab(101, 1, { groupId: 10 }), tab(102, 1, { groupId: 10, index: 1 })] },
+      { id: 2, type: "normal", focused: false, tabs: [tab(201, 2, { groupId: 20 })] }
+    ], [
+      { id: 10, windowId: 1, title: "Source", color: "red" },
+      { id: 20, windowId: 2, title: "Target", color: "blue" }
+    ]);
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+    const source = engine.getState().workspaces.find((workspace) => workspace.groupId === 10)!;
+    const target = engine.getState().workspaces.find((workspace) => workspace.groupId === 20)!;
+    const before = engine.getState();
+    const preview = engine.createWorkspaceMergePreview(source.id, target.id);
+    const originalMove = fake.api.tabs.move;
+    let failedAttempts = 0;
+    fake.api.tabs.move = async (tabId: number, options: { windowId: number; index: number }) => {
+      if (tabId === 102 && failedAttempts < 2) {
+        failedAttempts += 1;
+        throw new Error("merge move failed");
+      }
+      return originalMove(tabId, options);
+    };
+
+    await expect(engine.mergeWorkspaces(preview)).rejects.toThrow("无法移动标签 102");
+    expect(engine.getState()).toEqual(before);
+    expect(fake.windows.find((window) => window.id === 1)?.tabs.map((item) => item.id).sort()).toEqual([101, 102]);
+    expect(fake.windows.find((window) => window.id === 2)?.tabs.map((item) => item.id)).toEqual([201]);
+    await engine.stop();
+  });
+
   it("merges selected tabs into the current workspace, unpins them, and closes the emptied source window", async () => {
     const fake = new FakeBrowser([
       { id: 1, type: "normal", focused: true, tabs: [tab(101, 1, { groupId: 10, active: true })] },

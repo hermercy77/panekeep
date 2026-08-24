@@ -2,7 +2,8 @@ import type {
   TabRecord,
   TabKind,
   WindowState,
-  Workspace
+  Workspace,
+  WorkspaceMergePreview
 } from "../shared/contracts";
 import type { BackgroundRequest, BrowserStateResponse, MoveTabsResponse } from "../shared/messages";
 import {
@@ -28,9 +29,10 @@ import { DexieStateRepository, type StateRepository } from "../storage/repositor
 import { loadAIConfig } from "../ai/config";
 import { organizeTabs } from "../ai/pipeline";
 import { fingerprintTabs } from "../ai/snapshot";
-import { organizationPreviewSchema } from "../shared/contracts";
+import { organizationPreviewSchema, workspaceMergePreviewSchema } from "../shared/contracts";
 import { getAppLanguage, translate } from "../i18n";
 import { assignWorkspaceColors, inferWorkspaceIcon, normalizeWorkspaceIcon } from "../shared/workspaceAppearance";
+import { createWorkspaceMergePreview as buildWorkspaceMergePreview, fingerprintWorkspace } from "../shared/workspaceMerge";
 
 export interface BrowserStateEngineOptions {
   api?: BrowserLike;
@@ -307,24 +309,31 @@ export class BrowserStateEngine {
 
   async moveTabs(options: MoveTabsOptions): Promise<MoveTabsResponse> {
     const requested = [...new Set(options.tabIds)];
+    const alreadyMoved = requested.filter((id) => {
+      const tab = this.state.tabs.find((item) => item.id === id);
+      if (!tab || tab.kind !== "normal" || tab.pinned) return false;
+      return options.workspaceId === null
+        ? tab.workspaceId === null
+        : typeof options.workspaceId === "string" && tab.workspaceId === options.workspaceId;
+    });
     const eligible = requested.filter((id) => {
+      if (alreadyMoved.includes(id)) return false;
       const tab = this.state.tabs.find((item) => item.id === id);
       const allowed = options.workspaceId === null ? tab?.kind === "normal" : (tab?.kind === "normal" || tab?.kind === "fixed");
       return allowed && this.toNativeId(id) !== undefined;
     });
-    const skippedTabIds = requested.filter((id) => !eligible.includes(id));
-    let movedTabIds: string[] = [];
+    let movedTabIds: string[] = [...alreadyMoved];
 
     if (options.workspaceId !== undefined) {
       if (options.workspaceId === null) {
-        movedTabIds = await this.moveTabsToUnclassified(eligible, options.windowId, options.windowKey);
+        movedTabIds.push(...await this.moveTabsToUnclassified(eligible, options.windowId, options.windowKey));
       } else {
-        movedTabIds = await this.moveTabsToWorkspace(eligible, options.workspaceId);
+        movedTabIds.push(...await this.moveTabsToWorkspace(eligible, options.workspaceId));
       }
     } else if (options.windowId !== undefined || options.windowKey !== undefined) {
       const targetWindow = this.resolveTargetWindow(options.windowId, options.windowKey);
       if (!targetWindow) throw new Error(tr("error.targetWindowMissing"));
-      movedTabIds = await this.moveTabsToWindow(eligible, targetWindow.nativeId);
+      movedTabIds.push(...await this.moveTabsToWindow(eligible, targetWindow.nativeId));
     } else {
       throw new Error(tr("error.workspaceTargetRequired"));
     }
@@ -333,6 +342,7 @@ export class BrowserStateEngine {
       await this.closeEmptyWindowsAfterMutation();
       await this.syncFromBrowser();
     }
+    const skippedTabIds = requested.filter((id) => !movedTabIds.includes(id));
     return { ...this.getState(), movedTabIds, skippedTabIds };
   }
 
@@ -397,6 +407,55 @@ export class BrowserStateEngine {
       }
     }
     this.markChanged();
+  }
+
+  createWorkspaceMergePreview(sourceWorkspaceId: string, targetWorkspaceId: string): WorkspaceMergePreview {
+    if (!sourceWorkspaceId || !targetWorkspaceId || sourceWorkspaceId === targetWorkspaceId) {
+      throw new Error(tr("error.mergeTargetInvalid"));
+    }
+    const source = this.state.workspaces.find((workspace) => workspace.id === sourceWorkspaceId);
+    const target = this.state.workspaces.find((workspace) => workspace.id === targetWorkspaceId);
+    if (!source || !target) throw new Error(tr("error.workspaceNotFound"));
+    const sourceTabs = this.state.tabs.filter((tab) => tab.workspaceId === source.id && tab.kind !== "special");
+    return workspaceMergePreviewSchema.parse(buildWorkspaceMergePreview(source, target, sourceTabs));
+  }
+
+  async mergeWorkspaces(value: WorkspaceMergePreview): Promise<void> {
+    const preview = workspaceMergePreviewSchema.parse(value);
+    if (preview.sourceWorkspaceId === preview.targetWorkspaceId) throw new Error(tr("error.mergeTargetInvalid"));
+    const source = this.state.workspaces.find((workspace) => workspace.id === preview.sourceWorkspaceId);
+    const target = this.state.workspaces.find((workspace) => workspace.id === preview.targetWorkspaceId);
+    if (!source || !target) throw new Error(tr("error.workspaceNotFound"));
+    const workspaceChanged = source.windowKey !== preview.sourceWindowKey
+      || target.windowKey !== preview.targetWindowKey
+      || fingerprintWorkspace(source) !== preview.sourceWorkspaceFingerprint
+      || fingerprintWorkspace(target) !== preview.targetWorkspaceFingerprint;
+    const sourceTabs = this.state.tabs.filter((tab) => tab.workspaceId === source.id && tab.kind !== "special");
+    const expectedIds = [...preview.sourceTabIds].sort();
+    const currentIds = sourceTabs.map((tab) => tab.id).sort();
+    if (workspaceChanged
+      || expectedIds.length !== currentIds.length
+      || expectedIds.some((id, index) => id !== currentIds[index])
+      || fingerprintTabs(sourceTabs) !== preview.sourceFingerprint) {
+      throw new Error(tr("error.mergeStateChanged"));
+    }
+
+    const beforeState = this.getState();
+    try {
+      const moved = sourceTabs.length
+        ? await this.moveTabsToWorkspace(sourceTabs.map((tab) => tab.id), target.id, true)
+        : [];
+      if (moved.length !== sourceTabs.length) throw new Error(tr("error.mergeMoveIncomplete"));
+      this.state.workspaces = this.state.workspaces.filter((workspace) => workspace.id !== source.id);
+      this.markChanged();
+      if (this.api) {
+        await this.closeEmptyWindowsAfterMutation();
+        await this.syncFromBrowser();
+      }
+    } catch (error) {
+      await this.rollbackNativeState(beforeState);
+      throw error;
+    }
   }
 
   async exportBackup(asJson = false): Promise<ReturnType<typeof createBackup> | string> {
@@ -595,6 +654,8 @@ export class BrowserStateEngine {
         return this.updateWorkspace(request.workspaceId, request.patch);
       case "tab-fridge/delete-workspace":
         return this.deleteWorkspace(request.workspaceId);
+      case "tab-fridge/merge-workspaces":
+        return this.mergeWorkspaces(request.preview);
       case "tab-fridge/move-tabs":
         return this.moveTabs(request);
       case "tab-fridge/ungroup-tabs":
@@ -638,6 +699,18 @@ export class BrowserStateEngine {
         break;
       case "workspace.move":
         result = await this.moveWorkspace(String(payload.workspaceId), payload.beforeWorkspaceId);
+        break;
+      case "workspace.merge.preview":
+        result = this.createWorkspaceMergePreview(String(payload.sourceWorkspaceId), String(payload.targetWorkspaceId));
+        break;
+      case "workspace.merge":
+        result = await this.mergeWorkspaces(payload.preview);
+        break;
+      case "tabs.move":
+        result = await this.moveTabs({
+          tabIds: Array.isArray(payload.tabIds) ? payload.tabIds.map(String) : [],
+          workspaceId: payload.workspaceId === undefined ? null : payload.workspaceId
+        });
         break;
       case "tab.move":
         result = await this.moveTabs({

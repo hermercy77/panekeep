@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { OrganizationMode, OrganizationPreview, Workspace } from "../shared/contracts";
+import type { OrganizationMode, OrganizationPreview, Workspace, WorkspaceMergePreview } from "../shared/contracts";
 import { createBrowserAdapter } from "./adapter";
 import type { TabFridgeAdapter, TabFridgeSnapshot, WorkspaceDraft } from "./model";
 import { emptySnapshot } from "./model";
 import { getAppLanguage, translate } from "../i18n";
 import type { BackupImportResult } from "../shared/backup";
+import type { MoveTabsResponse } from "../shared/messages";
 
 export type UiLoadState = "loading" | "ready" | "error";
 
@@ -18,7 +19,10 @@ export interface UseTabFridgeStateResult {
   updateWorkspace: (id: string, draft: Partial<WorkspaceDraft>) => Promise<Workspace | null>;
   deleteWorkspace: (id: string) => Promise<boolean>;
   moveTab: (tabId: string, workspaceId: string | null) => Promise<boolean>;
+  moveTabs: (tabIds: string[], workspaceId: string | null) => Promise<MoveTabsResponse | null>;
   moveWorkspace: (workspaceId: string, beforeWorkspaceId?: string) => Promise<boolean>;
+  previewWorkspaceMerge: (sourceWorkspaceId: string, targetWorkspaceId: string) => Promise<WorkspaceMergePreview | null>;
+  mergeWorkspaces: (preview: WorkspaceMergePreview) => Promise<boolean>;
   activateTab: (tabId: string) => Promise<boolean>;
   requestOrganization: (mode: OrganizationMode, tabIds?: string[]) => Promise<OrganizationPreview | null>;
   applyOrganization: (preview: OrganizationPreview) => Promise<boolean>;
@@ -127,9 +131,35 @@ export function useTabFridgeState(adapter?: TabFridgeAdapter): UseTabFridgeState
     (tabId: string, workspaceId: string | null) => run(() => stableAdapter.moveTab(tabId, workspaceId), () => undefined),
     [run, stableAdapter]
   );
+  const moveTabs = useCallback(
+    async (tabIds: string[], workspaceId: string | null) => {
+      let outcome: MoveTabsResponse | null = null;
+      const ok = await run(
+        () => stableAdapter.moveTabs(tabIds, workspaceId),
+        (value) => { outcome = value; }
+      );
+      return ok ? outcome : null;
+    },
+    [run, stableAdapter]
+  );
   const moveWorkspace = useCallback(
     (workspaceId: string, beforeWorkspaceId?: string) =>
       run(() => stableAdapter.moveWorkspace(workspaceId, beforeWorkspaceId), () => undefined),
+    [run, stableAdapter]
+  );
+  const previewWorkspaceMerge = useCallback(
+    async (sourceWorkspaceId: string, targetWorkspaceId: string) => {
+      let preview: WorkspaceMergePreview | null = null;
+      const ok = await run(
+        () => stableAdapter.previewWorkspaceMerge(sourceWorkspaceId, targetWorkspaceId),
+        (value) => { preview = value; }
+      );
+      return ok ? preview : null;
+    },
+    [run, stableAdapter]
+  );
+  const mergeWorkspaces = useCallback(
+    (preview: WorkspaceMergePreview) => run(() => stableAdapter.mergeWorkspaces(preview), () => undefined),
     [run, stableAdapter]
   );
   const activateTab = useCallback(
@@ -182,7 +212,10 @@ export function useTabFridgeState(adapter?: TabFridgeAdapter): UseTabFridgeState
     updateWorkspace,
     deleteWorkspace,
     moveTab,
+    moveTabs,
     moveWorkspace,
+    previewWorkspaceMerge,
+    mergeWorkspaces,
     activateTab,
     requestOrganization,
     applyOrganization

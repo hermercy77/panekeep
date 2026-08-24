@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { organizationPreviewSchema, tabRecordSchema, workspaceSchema } from "../../src/shared/contracts";
+import { organizationPreviewSchema, tabRecordSchema, workspaceMergePreviewSchema, workspaceSchema } from "../../src/shared/contracts";
 import { normalizeGroupColor } from "../../src/shared/constants";
 
 describe("shared contract compatibility", () => {
@@ -49,5 +49,22 @@ describe("shared contract compatibility", () => {
       createdAt: 1,
       updatedAt: 1
     }).icon).toBe("folder");
+  });
+
+  it("requires workspace and tab fingerprints for a merge confirmation", () => {
+    expect(() => workspaceMergePreviewSchema.parse({
+      sourceWorkspaceId: "source",
+      targetWorkspaceId: "target",
+      sourceWindowKey: "window:1",
+      targetWindowKey: "window:2",
+      sourceWorkspaceFingerprint: "source-state",
+      targetWorkspaceFingerprint: "target-state",
+      sourceTabIds: ["tab:1"],
+      sourceFingerprint: "tab-state"
+    })).not.toThrow();
+    expect(() => workspaceMergePreviewSchema.parse({
+      sourceWorkspaceId: "source",
+      targetWorkspaceId: "target"
+    })).toThrow();
   });
 });
