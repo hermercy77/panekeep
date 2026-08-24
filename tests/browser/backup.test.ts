@@ -54,4 +54,10 @@ describe("backup and browser classification", () => {
     expect(classifyBrowserTab({ id: 2, url: "https://example.com", pinned: true })).toBe("fixed");
     expect(classifyBrowserTab({ id: 3, url: "https://example.com", pinned: false })).toBe("normal");
   });
+
+  it("returns concise import errors without leaking validator internals", () => {
+    expect(() => parseBackup("not-json")).toThrow("备份文件不是有效的 JSON");
+    expect(() => parseBackup({ schemaVersion: 999, product: "tab-fridge" })).toThrow("不支持备份版本 999");
+    expect(() => parseBackup({ schemaVersion: 1, product: "tab-fridge" })).toThrow("备份文件结构不完整或无效");
+  });
 });

@@ -45,14 +45,21 @@ export function parseBackup(value: unknown): Backup {
   if (typeof value === "string") {
     try {
       candidate = JSON.parse(value) as unknown;
-    } catch (error) {
-      throw new Error(translate(getAppLanguage(), "backup.invalidJson", { details: error instanceof Error ? error.message : String(error) }));
+    } catch {
+      throw new Error(translate(getAppLanguage(), "backup.invalidJson"));
+    }
+  }
+
+  if (candidate && typeof candidate === "object" && "schemaVersion" in candidate) {
+    const version = (candidate as { schemaVersion?: unknown }).schemaVersion;
+    if (version !== BACKUP_SCHEMA_VERSION) {
+      throw new Error(translate(getAppLanguage(), "backup.unsupportedVersion", { version: String(version) }));
     }
   }
 
   const parsed = backupSchema.safeParse(candidate);
   if (!parsed.success) {
-    throw new Error(translate(getAppLanguage(), "backup.invalid", { details: parsed.error.message }));
+    throw new Error(translate(getAppLanguage(), "backup.invalid"));
   }
   return parsed.data;
 }
