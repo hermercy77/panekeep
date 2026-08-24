@@ -27,6 +27,7 @@ export interface CompleteOptions extends RetryOptions {
   responseFormat?: "json_object" | "text";
   maxTokens?: number;
   thinking?: "enabled" | "disabled";
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
 }
 
 export interface TestConnectionOptions extends RetryOptions {
@@ -95,6 +96,10 @@ function isDeepSeekCompatible(config: AIConfig): boolean {
   }
 }
 
+function isGPT55(config: AIConfig): boolean {
+  return /^gpt-5\.5(?:$|-)/i.test(config.model);
+}
+
 async function readJSON(response: { json?: () => Promise<unknown>; text?: () => Promise<string> }): Promise<unknown> {
   if (response.json) {
     try {
@@ -140,6 +145,7 @@ export class OpenAICompatibleClient implements AIClient {
   private readonly fetchImpl: AIFetch;
   private readonly logger?: DebugLogger;
   private readonly retry: RetryOptions;
+  private supportsGPT55ReasoningEffort: boolean | undefined;
 
   constructor(config: AIConfig, options: OpenAICompatibleClientOptions = {}) {
     this.config = assertUsableConfig(config);
@@ -152,13 +158,19 @@ export class OpenAICompatibleClient implements AIClient {
     if (!messages.length) throw new AIConfigError(tr("ai.chatRequired"));
     await ensureAIOriginPermission(this.config.baseUrl);
     const thinking = options.thinking ?? (isDeepSeekCompatible(this.config) ? "disabled" : undefined);
+    // Tab organization is a latency-sensitive classification task. GPT-5.5
+    // defaults to medium reasoning, so opt out unless the caller explicitly
+    // requests a different effort.
+    const inferredReasoningEffort = isGPT55(this.config) && this.supportsGPT55ReasoningEffort !== false ? "none" : undefined;
+    const reasoningEffort = options.reasoningEffort ?? inferredReasoningEffort;
     const body = {
       model: this.config.model,
       messages,
       temperature: options.temperature ?? 0,
       ...(options.responseFormat === "text" ? {} : { response_format: { type: "json_object" } }),
       ...(options.maxTokens === undefined ? {} : { max_tokens: Math.max(1, Math.floor(options.maxTokens)) }),
-      ...(thinking === undefined ? {} : { thinking: { type: thinking } })
+      ...(thinking === undefined ? {} : { thinking: { type: thinking } }),
+      ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort })
     };
     const url = endpoint(this.config.baseUrl, "chat/completions");
     this.logger?.debug("ai.request", {
@@ -168,11 +180,26 @@ export class OpenAICompatibleClient implements AIClient {
       messageCount: messages.length
     });
 
-    const response = await fetchWithRetry(this.fetchImpl, url, {
+    const send = (requestBody: Record<string, unknown>) => fetchWithRetry(this.fetchImpl, url, {
       method: "POST",
       headers: headers(this.config),
-      body: JSON.stringify(body)
+      body: JSON.stringify(requestBody)
     }, { ...this.retry, ...options });
+    let response;
+    try {
+      response = await send(body);
+      if (inferredReasoningEffort !== undefined) this.supportsGPT55ReasoningEffort = true;
+    } catch (error) {
+      const rejectedInferredEffort = inferredReasoningEffort !== undefined
+        && options.reasoningEffort === undefined
+        && error instanceof AIHttpError
+        && (error.status === 400 || error.status === 422)
+        && /reasoning(?:[_. ]?effort)?/i.test(error.message);
+      if (!rejectedInferredEffort) throw error;
+      this.supportsGPT55ReasoningEffort = false;
+      const { reasoning_effort: _unsupported, ...fallbackBody } = body;
+      response = await send(fallbackBody);
+    }
     const payload = await readJSON(response);
     const content = extractContent(payload);
     this.logger?.debug("ai.response", { status: response.status, contentLength: content.length });

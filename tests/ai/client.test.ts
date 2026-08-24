@@ -94,6 +94,64 @@ describe("OpenAI-compatible client", () => {
     expect(requestBody).not.toHaveProperty("thinking");
   });
 
+  it("uses no reasoning by default for latency-sensitive GPT-5.5 classification", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const client = new OpenAICompatibleClient({
+      baseUrl: "https://provider.test/v1",
+      apiKey: "sk-test",
+      model: "gpt-5.5"
+    }, {
+      fetch: async (_url, init) => {
+        requestBody = JSON.parse(init?.body ?? "{}") as Record<string, unknown>;
+        return response(200, { choices: [{ message: { content: '{"ok":true}' } }] });
+      }
+    });
+
+    await client.completeJSON([{ role: "user", content: "classify" }]);
+
+    expect(requestBody).toMatchObject({ reasoning_effort: "none" });
+  });
+
+  it("allows callers to override GPT-5.5 reasoning effort", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const client = new OpenAICompatibleClient({
+      baseUrl: "https://provider.test/v1",
+      apiKey: "sk-test",
+      model: "gpt-5.5-2026-04-23"
+    }, {
+      fetch: async (_url, init) => {
+        requestBody = JSON.parse(init?.body ?? "{}") as Record<string, unknown>;
+        return response(200, { choices: [{ message: { content: '{"ok":true}' } }] });
+      }
+    });
+
+    await client.completeJSON([{ role: "user", content: "classify" }], undefined, { reasoningEffort: "low" });
+
+    expect(requestBody).toMatchObject({ reasoning_effort: "low" });
+  });
+
+  it("falls back once when a compatible provider rejects inferred GPT-5.5 reasoning effort", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const client = new OpenAICompatibleClient({
+      baseUrl: "https://provider.test/v1",
+      apiKey: "sk-test",
+      model: "gpt-5.5"
+    }, {
+      fetch: async (_url, init) => {
+        const requestBody = JSON.parse(init?.body ?? "{}") as Record<string, unknown>;
+        requestBodies.push(requestBody);
+        return requestBodies.length === 1
+          ? response(400, { error: { message: "Unknown parameter: reasoning_effort" } })
+          : response(200, { choices: [{ message: { content: '{"ok":true}' } }] });
+      }
+    });
+
+    await expect(client.completeJSON([{ role: "user", content: "classify" }])).resolves.toEqual({ ok: true });
+    expect(requestBodies).toHaveLength(2);
+    expect(requestBodies[0]).toHaveProperty("reasoning_effort", "none");
+    expect(requestBodies[1]).not.toHaveProperty("reasoning_effort");
+  });
+
   it("applies the timeout to the response body, not only the response headers", async () => {
     const client = new OpenAICompatibleClient(config, {
       fetch: async () => ({
