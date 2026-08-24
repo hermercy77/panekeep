@@ -6,8 +6,8 @@ import type {
   Workspace
 } from "../shared/contracts";
 import { organizationPreviewSchema, organizationModeSchema } from "../shared/contracts";
-import { AIValidationError, AIConfigError, AIConflictError } from "./errors";
-import { OpenAICompatibleClient, type AIClient, type OpenAICompatibleClientOptions } from "./client";
+import { AIValidationError, AIConfigError, AIConflictError, AIInvalidJsonError } from "./errors";
+import { OpenAICompatibleClient, type AIClient, type ChatMessage, type OpenAICompatibleClientOptions } from "./client";
 import { buildOrganizationMessages } from "./prompts";
 import {
   organizationResponseSchema,
@@ -131,9 +131,25 @@ async function requestBatch(
   language: AppLanguage,
   signal?: AbortSignal
 ): Promise<OrganizationResponse> {
-  const messages = buildOrganizationMessages({ mode, tabs, existingWorkspaces, language });
-  const raw = await client.completeJSON(messages, organizationResponseSchema, { signal });
-  return parseAndValidateOrganizationResponse(raw, tabs.map((tab) => tab.id));
+  const baseMessages: ChatMessage[] = buildOrganizationMessages({ mode, tabs, existingWorkspaces, language });
+  const tabIds = tabs.map((tab) => tab.id);
+  let messages = baseMessages;
+  let previousRaw: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const raw = await client.completeJSON(messages, organizationResponseSchema, { signal, maxTokens: 2_048 });
+      previousRaw = raw;
+      return parseAndValidateOrganizationResponse(raw, tabIds);
+    } catch (error) {
+      const retryableValidation = error instanceof AIValidationError || error instanceof AIInvalidJsonError;
+      if (!retryableValidation || attempt === 1 || signal?.aborted) throw error;
+      const correction = `The previous JSON was invalid or incomplete. Return corrected JSON only. Assign every required tab ID exactly once. Required IDs (${tabIds.length}): ${JSON.stringify(tabIds)}.`;
+      messages = previousRaw === undefined
+        ? [...baseMessages, { role: "user", content: correction }]
+        : [...baseMessages, { role: "assistant", content: JSON.stringify(previousRaw) }, { role: "user", content: correction }];
+    }
+  }
+  throw new AIValidationError(tr("ai.schemaFailed"));
 }
 
 export async function organizeTabs(request: OrganizationPipelineRequest): Promise<OrganizationPreview> {

@@ -25,11 +25,27 @@ describe("organization pipeline", () => {
           groups: [{ id: "one", name: "One", description: "", tags: [], existingWorkspaceId: null, tabIds: ["tab-1", "tab-2"] }],
           unclassifiedTabIds: []
         },
+        { groups: [], unclassifiedTabIds: [] },
         { groups: [], unclassifiedTabIds: [] }
       ]
     });
     await expect(organizeTabs({ tabs: tabsFixture, mode: "purpose", client, batchSize: 2 }))
       .rejects.toBeInstanceOf(AIValidationError);
+  });
+
+  it("retries one invalid assignment with a corrective ID checklist", async () => {
+    const client = new MockAIClient({
+      responses: [
+        { groups: [{ id: "first", name: "First", description: "", tags: [], existingWorkspaceId: null, tabIds: ["tab-1", "tab-2"] }], unclassifiedTabIds: [] },
+        { groups: [{ id: "fixed", name: "Fixed", description: "", tags: [], existingWorkspaceId: null, tabIds: ["tab-1", "tab-2", "tab-3"] }], unclassifiedTabIds: [] }
+      ]
+    });
+
+    const preview = await organizeTabs({ tabs: tabsFixture, mode: "purpose", client });
+
+    expect(client.requests).toHaveLength(2);
+    expect(client.requests[1].messages.at(-1)?.content).toContain('Required IDs (3): ["tab-1","tab-2","tab-3"]');
+    expect(preview.sourceTabIds).toEqual(["tab-1", "tab-2", "tab-3"]);
   });
 
   it("merges different batch group IDs that target the same existing workspace and preserves its metadata", async () => {
@@ -129,6 +145,6 @@ describe("organization pipeline", () => {
     expect(client.requests).toHaveLength(2);
     expect(client.requests.every((request) => request.messages[0].content.includes("in English"))).toBe(true);
     expect(client.requests.every((request) => request.messages[1].content.includes("English (en)"))).toBe(true);
-    expect(client.requests.every((request) => request.messages[1].content.includes("Always prefer a suitable existing workspace"))).toBe(true);
+    expect(client.requests.every((request) => request.messages[1].content.includes("you MUST set its existingWorkspaceId"))).toBe(true);
   });
 });

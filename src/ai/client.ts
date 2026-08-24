@@ -25,6 +25,8 @@ export interface ChatMessage {
 export interface CompleteOptions extends RetryOptions {
   temperature?: number;
   responseFormat?: "json_object" | "text";
+  maxTokens?: number;
+  thinking?: "enabled" | "disabled";
 }
 
 export interface TestConnectionOptions extends RetryOptions {
@@ -85,6 +87,14 @@ function headers(config: AIConfig): Record<string, string> {
   };
 }
 
+function isDeepSeekCompatible(config: AIConfig): boolean {
+  try {
+    return new URL(config.baseUrl).hostname.toLowerCase().includes("deepseek") || config.model.toLowerCase().startsWith("deepseek-");
+  } catch {
+    return config.model.toLowerCase().startsWith("deepseek-");
+  }
+}
+
 async function readJSON(response: { json?: () => Promise<unknown>; text?: () => Promise<string> }): Promise<unknown> {
   if (response.json) {
     try {
@@ -141,11 +151,14 @@ export class OpenAICompatibleClient implements AIClient {
   async complete(messages: readonly ChatMessage[], options: CompleteOptions = {}): Promise<string> {
     if (!messages.length) throw new AIConfigError(tr("ai.chatRequired"));
     await ensureAIOriginPermission(this.config.baseUrl);
+    const thinking = options.thinking ?? (isDeepSeekCompatible(this.config) ? "disabled" : undefined);
     const body = {
       model: this.config.model,
       messages,
       temperature: options.temperature ?? 0,
-      ...(options.responseFormat === "text" ? {} : { response_format: { type: "json_object" } })
+      ...(options.responseFormat === "text" ? {} : { response_format: { type: "json_object" } }),
+      ...(options.maxTokens === undefined ? {} : { max_tokens: Math.max(1, Math.floor(options.maxTokens)) }),
+      ...(thinking === undefined ? {} : { thinking: { type: thinking } })
     };
     const url = endpoint(this.config.baseUrl, "chat/completions");
     this.logger?.debug("ai.request", {

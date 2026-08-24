@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AIHttpError, OpenAICompatibleClient } from "../../src/ai";
+import { AIHttpError, AITimeoutError, OpenAICompatibleClient } from "../../src/ai";
 
 function response(status: number, body: unknown) {
   return {
@@ -56,5 +56,55 @@ describe("OpenAI-compatible client", () => {
     });
     await expect(client.testConnection()).rejects.toBeInstanceOf(AIHttpError);
     expect(attempts).toBe(1);
+  });
+
+  it("disables DeepSeek thinking and applies the output-token limit", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const client = new OpenAICompatibleClient({
+      baseUrl: "https://api.deepseek.com/v1",
+      apiKey: "sk-test",
+      model: "deepseek-v4-flash"
+    }, {
+      fetch: async (_url, init) => {
+        requestBody = JSON.parse(init?.body ?? "{}") as Record<string, unknown>;
+        return response(200, { choices: [{ message: { content: '{"ok":true}' } }] });
+      }
+    });
+
+    await client.completeJSON([{ role: "user", content: "return json" }], undefined, { maxTokens: 1_234 });
+
+    expect(requestBody).toMatchObject({
+      max_tokens: 1_234,
+      thinking: { type: "disabled" },
+      response_format: { type: "json_object" }
+    });
+  });
+
+  it("does not send the DeepSeek-specific thinking option to other providers", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const client = new OpenAICompatibleClient(config, {
+      fetch: async (_url, init) => {
+        requestBody = JSON.parse(init?.body ?? "{}") as Record<string, unknown>;
+        return response(200, { choices: [{ message: { content: '{"ok":true}' } }] });
+      }
+    });
+
+    await client.completeJSON([{ role: "user", content: "return json" }]);
+
+    expect(requestBody).not.toHaveProperty("thinking");
+  });
+
+  it("applies the timeout to the response body, not only the response headers", async () => {
+    const client = new OpenAICompatibleClient(config, {
+      fetch: async () => ({
+        ok: true,
+        status: 200,
+        text: () => new Promise<string>(() => undefined)
+      }),
+      retry: { maxRetries: 0, timeoutMs: 10 }
+    });
+
+    await expect(client.complete([{ role: "user", content: "return json" }]))
+      .rejects.toBeInstanceOf(AITimeoutError);
   });
 });

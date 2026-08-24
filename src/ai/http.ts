@@ -69,6 +69,29 @@ function statusError(response: AIResponseLike): AIError {
   return new AIHttpError(translate(getAppLanguage(), "ai.httpError", { status }), status);
 }
 
+async function bufferResponse(response: AIResponseLike): Promise<AIResponseLike> {
+  if (response.text) {
+    const body = await response.text();
+    return {
+      ok: response.ok,
+      status: response.status,
+      text: async () => body,
+      json: async () => JSON.parse(body) as unknown
+    };
+  }
+  if (response.json) {
+    const value = await response.json();
+    const body = JSON.stringify(value);
+    return {
+      ok: response.ok,
+      status: response.status,
+      text: async () => body,
+      json: async () => value
+    };
+  }
+  return response;
+}
+
 async function withBodyMessage(error: AIError, response: AIResponseLike): Promise<AIError> {
   if (!response.text) return error;
   try {
@@ -123,23 +146,33 @@ export async function fetchWithRetry(
     if (options.signal?.aborted) throw new AIAbortError();
 
     const controller = new AbortController();
-    let timedOut = false;
-    let timeout: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
-      timedOut = true;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let rejectCancellation: ((error: AIError) => void) | undefined;
+    const cancellation = new Promise<never>((_, reject) => {
+      rejectCancellation = reject;
+      timeout = setTimeout(() => {
+        controller.abort();
+        reject(new AITimeoutError());
+      }, timeoutMs);
+    });
+    const onParentAbort = () => {
       controller.abort();
-    }, timeoutMs);
-    const onParentAbort = () => controller.abort();
+      rejectCancellation?.(new AIAbortError());
+    };
     options.signal?.addEventListener("abort", onParentAbort, { once: true });
 
     try {
-      const response = await fetchImpl(input, { ...init, signal: controller.signal });
+      const response = await Promise.race([
+        fetchImpl(input, { ...init, signal: controller.signal }).then(bufferResponse),
+        cancellation
+      ]);
       if (response.ok || (response.status >= 200 && response.status < 300)) return response;
       const error = await withBodyMessage(statusError(response), response);
       if (!error.retryable || attempt >= maxRetries) throw error;
       await wait(retryDelayMs, options.signal);
     } catch (error) {
       if (options.signal?.aborted) throw new AIAbortError(undefined, error);
-      if (timedOut || isAbortException(error)) {
+      if (error instanceof AITimeoutError || isAbortException(error)) {
         const timeoutError = new AITimeoutError(undefined, error);
         if (attempt >= maxRetries) throw timeoutError;
         await wait(retryDelayMs, options.signal);

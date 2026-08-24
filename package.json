@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:i18n": "vitest run tests/i18n",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "eval:ai": "vite-node scripts/evaluate-ai.ts",
+    "eval:ai:live": "vite-node scripts/evaluate-ai.ts --live"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.1.0",
@@ -33,6 +35,7 @@
     "jsdom": "^26.1.0",
     "typescript": "^5.9.2",
     "vite": "^7.1.3",
+    "vite-node": "^3.2.4",
     "vitest": "^3.2.4",
     "wxt": "^0.20.8"
   }

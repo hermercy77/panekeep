@@ -3,4 +3,5 @@ node_modules/
 .wxt/
 coverage/
 dist/
+artifacts/ai-evals/
 .DS_Store
