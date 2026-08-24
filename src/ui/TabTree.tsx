@@ -24,7 +24,7 @@ interface TabTreeProps {
   onToggleWorkspace: (workspaceId: string) => void;
   onActivateTab: (tabId: string) => void;
   onCheckedTabIdsChange: (tabIds: Set<string>) => void;
-  onMoveTabs: (tabIds: string[], workspaceId: string | null) => void;
+  onMoveTabs: (tabIds: string[], workspaceId: string | null, targetWindowKey?: string) => void;
   onMoveWorkspace: (workspaceId: string, beforeWorkspaceId?: string) => void;
   onRequestWorkspaceMerge: (sourceWorkspaceId: string, targetWorkspaceId: string) => void;
   onEditWorkspace: (workspace: Workspace) => void;
@@ -406,7 +406,6 @@ export function TabTree({
     : [];
   const draggedWorkspace = dragPayload?.type === "workspace" ? snapshot.workspaces.find((workspace) => workspace.id === dragPayload.id) : undefined;
   const canMoveDraggedTabs = dragPayload?.type === "tabs" && draggedTabs.some((tab) => tab.kind !== "special");
-  const canMoveDraggedTabsToUnclassified = canMoveDraggedTabs && draggedTabs.some((tab) => tab.kind === "normal" && !tab.pinned && tab.workspaceId !== null);
   const tabDropGuidance = draggedTabs.some((tab) => tab.pinned) ? t("tree.unpinAndMove") : t("tree.dropToMove");
   const renderTabRow = (tab: TabRecord) => (
     <TabRow
@@ -444,9 +443,9 @@ export function TabTree({
         const specialExpanded = sectionExpanded(window.key, "special");
         const fixedExpanded = sectionExpanded(window.key, "fixed");
         const normalDraggedTabs = draggedTabs.filter((tab) => tab.kind === "normal" && !tab.pinned);
-        const canDropIntoWindowUnclassified = canMoveDraggedTabsToUnclassified
+        const canDropIntoWindowUnclassified = canMoveDraggedTabs
           && normalDraggedTabs.length > 0
-          && normalDraggedTabs.every((tab) => tab.windowKey === window.key);
+          && normalDraggedTabs.some((tab) => tab.workspaceId !== null || tab.windowKey !== window.key);
         const showUnclassified = true;
         const showSpecial = true;
         const showFixed = true;
@@ -607,7 +606,7 @@ export function TabTree({
                     event.preventDefault();
                     event.stopPropagation();
                     const payload = parseDrag(event) ?? dragPayload;
-                    if (payload?.type === "tabs") onMoveTabs(payload.ids, null);
+                    if (payload?.type === "tabs") onMoveTabs(payload.ids, null, window.key);
                     finishDrag();
                   }}
                 >

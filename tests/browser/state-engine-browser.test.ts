@@ -236,6 +236,30 @@ describe("BrowserStateEngine with Chromium state", () => {
     await engine.stop();
   });
 
+  it("moves a tab into another window's unclassified area", async () => {
+    const fake = new FakeBrowser([
+      { id: 1, type: "normal", focused: true, tabs: [tab(101, 1, { active: true }), tab(102, 1, { index: 1 })] },
+      { id: 2, type: "normal", focused: false, tabs: [tab(201, 2, { active: true })] }
+    ], []);
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+
+    const response = await engine.handleUiAction({
+      action: "tabs.move",
+      payload: { tabIds: ["101"], workspaceId: null, windowKey: "window:2" }
+    }) as { result: Awaited<ReturnType<BrowserStateEngine["moveTabs"]>> };
+    const result = response.result;
+
+    expect(result.movedTabIds).toEqual(["101"]);
+    expect(result.skippedTabIds).toEqual([]);
+    expect(engine.getState().tabs.find((item) => item.id === "101")).toMatchObject({
+      windowKey: "window:2",
+      workspaceId: null
+    });
+    expect(fake.windows.find((window) => window.id === 2)?.tabs.map((item) => item.id)).toEqual([201, 101]);
+    await engine.stop();
+  });
+
   it("merges workspaces across windows, preserves target metadata, deletes the source, and closes its empty window", async () => {
     const fake = new FakeBrowser([
       { id: 1, type: "normal", focused: false, tabs: [tab(101, 1, { groupId: 10 }), tab(102, 1, { groupId: 10, index: 1 })] },
@@ -697,23 +721,113 @@ describe("BrowserStateEngine with Chromium state", () => {
       mode: "purpose" as const,
       sourceTabIds: ["101", "102"],
       sourceFingerprint: fingerprintTabs(sourceTabs),
-      groups: [{
-        id: "development",
-        name: "Development",
-        description: "Active implementation work",
-        tags: ["development"],
-        icon: "code" as const,
-        color: "green",
-        existingWorkspaceId: null,
-        tabIds: ["101", "102"]
-      }],
+      groups: [
+        {
+          id: "development",
+          name: "Development",
+          description: "Active implementation work",
+          tags: ["development"],
+          icon: "code" as const,
+          color: "green",
+          existingWorkspaceId: null,
+          tabIds: ["101", "102"]
+        },
+        {
+          id: "emptied-in-preview",
+          name: "Unused suggestion",
+          description: "",
+          tags: [],
+          icon: "folder" as const,
+          color: "grey",
+          existingWorkspaceId: null,
+          tabIds: []
+        }
+      ],
       unclassifiedTabIds: []
     };
 
     await engine.handleUiAction({ action: "organization.apply", payload: { preview, targetWindowKey: "window:1" } });
 
     expect(engine.getState().workspaces[0]).toMatchObject({ name: "Development", icon: "code", color: "green" });
+    expect(engine.getState().workspaces.some((workspace) => workspace.name === "Unused suggestion")).toBe(false);
     expect(fake.groupUpdates.at(-1)?.changes).toMatchObject({ title: "Development", color: "green" });
+    await engine.stop();
+  });
+
+  it("deletes a source workspace emptied by an applied AI preview", async () => {
+    const fake = new FakeBrowser([
+      { id: 1, type: "normal", focused: true, tabs: [
+        tab(101, 1, { groupId: 10, active: true }),
+        tab(102, 1, { groupId: 20, index: 1 })
+      ] }
+    ], [
+      { id: 10, windowId: 1, title: "Source", color: "red" },
+      { id: 20, windowId: 1, title: "Target", color: "blue" }
+    ]);
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+    const before = engine.getState();
+    const source = before.workspaces.find((workspace) => workspace.groupId === 10)!;
+    const target = before.workspaces.find((workspace) => workspace.groupId === 20)!;
+    const selectedTabs = before.tabs.filter((item) => item.id === "101");
+    const preview = {
+      mode: "purpose" as const,
+      sourceTabIds: ["101"],
+      sourceFingerprint: fingerprintTabs(selectedTabs),
+      groups: [{
+        id: "target",
+        name: target.name,
+        description: target.description,
+        tags: target.tags,
+        existingWorkspaceId: target.id,
+        tabIds: ["101"]
+      }],
+      unclassifiedTabIds: []
+    };
+
+    await engine.handleUiAction({ action: "organization.apply", payload: { preview, targetWindowKey: "window:1" } });
+
+    expect(engine.getState().workspaces.map((workspace) => workspace.id)).toEqual([target.id]);
+    expect(engine.getState().workspaces.some((workspace) => workspace.id === source.id)).toBe(false);
+    expect(engine.getState().tabs.filter((item) => item.workspaceId === target.id).map((item) => item.id).sort()).toEqual(["101", "102"]);
+    await engine.stop();
+  });
+
+  it("keeps an AI source workspace when an unselected tab remains", async () => {
+    const fake = new FakeBrowser([
+      { id: 1, type: "normal", focused: true, tabs: [
+        tab(101, 1, { groupId: 10, active: true }),
+        tab(103, 1, { groupId: 10, index: 1 }),
+        tab(102, 1, { groupId: 20, index: 2 })
+      ] }
+    ], [
+      { id: 10, windowId: 1, title: "Source", color: "red" },
+      { id: 20, windowId: 1, title: "Target", color: "blue" }
+    ]);
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+    const before = engine.getState();
+    const source = before.workspaces.find((workspace) => workspace.groupId === 10)!;
+    const target = before.workspaces.find((workspace) => workspace.groupId === 20)!;
+    const selectedTabs = before.tabs.filter((item) => item.id === "101");
+
+    await engine.handleUiAction({ action: "organization.apply", payload: { preview: {
+      mode: "purpose" as const,
+      sourceTabIds: ["101"],
+      sourceFingerprint: fingerprintTabs(selectedTabs),
+      groups: [{
+        id: "target",
+        name: target.name,
+        description: target.description,
+        tags: target.tags,
+        existingWorkspaceId: target.id,
+        tabIds: ["101"]
+      }],
+      unclassifiedTabIds: []
+    }, targetWindowKey: "window:1" } });
+
+    expect(engine.getState().workspaces.map((workspace) => workspace.id).sort()).toEqual([source.id, target.id].sort());
+    expect(engine.getState().tabs.find((item) => item.id === "103")?.workspaceId).toBe(source.id);
     await engine.stop();
   });
 

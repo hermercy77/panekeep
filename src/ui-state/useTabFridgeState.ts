@@ -19,7 +19,7 @@ export interface UseTabFridgeStateResult {
   updateWorkspace: (id: string, draft: Partial<WorkspaceDraft>) => Promise<Workspace | null>;
   deleteWorkspace: (id: string) => Promise<boolean>;
   moveTab: (tabId: string, workspaceId: string | null) => Promise<boolean>;
-  moveTabs: (tabIds: string[], workspaceId: string | null) => Promise<MoveTabsResponse | null>;
+  moveTabs: (tabIds: string[], workspaceId: string | null, targetWindowKey?: string) => Promise<MoveTabsResponse | null>;
   moveWorkspace: (workspaceId: string, beforeWorkspaceId?: string) => Promise<boolean>;
   previewWorkspaceMerge: (sourceWorkspaceId: string, targetWorkspaceId: string) => Promise<WorkspaceMergePreview | null>;
   mergeWorkspaces: (preview: WorkspaceMergePreview) => Promise<boolean>;
@@ -132,10 +132,10 @@ export function useTabFridgeState(adapter?: TabFridgeAdapter): UseTabFridgeState
     [run, stableAdapter]
   );
   const moveTabs = useCallback(
-    async (tabIds: string[], workspaceId: string | null) => {
+    async (tabIds: string[], workspaceId: string | null, targetWindowKey?: string) => {
       let outcome: MoveTabsResponse | null = null;
       const ok = await run(
-        () => stableAdapter.moveTabs(tabIds, workspaceId),
+        () => stableAdapter.moveTabs(tabIds, workspaceId, targetWindowKey),
         (value) => { outcome = value; }
       );
       return ok ? outcome : null;

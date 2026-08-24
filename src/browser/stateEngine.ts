@@ -309,11 +309,19 @@ export class BrowserStateEngine {
 
   async moveTabs(options: MoveTabsOptions): Promise<MoveTabsResponse> {
     const requested = [...new Set(options.tabIds)];
+    const unclassifiedTargetWindow = options.workspaceId === null && (options.windowId !== undefined || options.windowKey !== undefined)
+      ? this.resolveTargetWindow(options.windowId, options.windowKey)
+      : undefined;
+    if (options.workspaceId === null
+      && (options.windowId !== undefined || options.windowKey !== undefined)
+      && !unclassifiedTargetWindow) {
+      throw new Error(tr("error.targetWindowMissing"));
+    }
     const alreadyMoved = requested.filter((id) => {
       const tab = this.state.tabs.find((item) => item.id === id);
       if (!tab || tab.kind !== "normal" || tab.pinned) return false;
       return options.workspaceId === null
-        ? tab.workspaceId === null
+        ? tab.workspaceId === null && (!unclassifiedTargetWindow || tab.windowKey === unclassifiedTargetWindow.key)
         : typeof options.workspaceId === "string" && tab.workspaceId === options.workspaceId;
     });
     const eligible = requested.filter((id) => {
@@ -709,7 +717,8 @@ export class BrowserStateEngine {
       case "tabs.move":
         result = await this.moveTabs({
           tabIds: Array.isArray(payload.tabIds) ? payload.tabIds.map(String) : [],
-          workspaceId: payload.workspaceId === undefined ? null : payload.workspaceId
+          workspaceId: payload.workspaceId === undefined ? null : payload.workspaceId,
+          windowKey: typeof payload.windowKey === "string" ? payload.windowKey : undefined
         });
         break;
       case "tab.move":
@@ -805,6 +814,7 @@ export class BrowserStateEngine {
 
   private async applyOrganizationPreview(payload: Record<string, unknown>): Promise<unknown> {
     const parsed = organizationPreviewSchema.parse(payload.preview);
+    const nonEmptyGroups = parsed.groups.filter((group) => group.tabIds.length > 0);
     const beforeState = this.getState();
     const sourceIds = new Set(parsed.sourceTabIds);
     if (sourceIds.size !== parsed.sourceTabIds.length || sourceIds.size === 0) {
@@ -817,8 +827,11 @@ export class BrowserStateEngine {
     if (fingerprintTabs(currentSourceTabs) !== parsed.sourceFingerprint) {
       throw new Error(tr("error.tabChanged"));
     }
+    const sourceWorkspaceIds = new Set(currentSourceTabs
+      .map((tab) => tab.workspaceId)
+      .filter((id): id is string => id !== null));
     const assignedIds: string[] = [];
-    for (const group of parsed.groups) assignedIds.push(...group.tabIds);
+    for (const group of nonEmptyGroups) assignedIds.push(...group.tabIds);
     assignedIds.push(...parsed.unclassifiedTabIds);
     if (assignedIds.length !== sourceIds.size || new Set(assignedIds).size !== sourceIds.size || assignedIds.some((id) => !sourceIds.has(id))) {
       throw new Error(tr("error.previewIncomplete"));
@@ -828,14 +841,14 @@ export class BrowserStateEngine {
       : this.state.windows.find((window) => window.isCurrent)?.key ?? this.state.windows[0]?.key;
     if (!targetWindowKey) throw new Error(tr("error.targetWindowMissing"));
     const existingIds = new Set(this.state.workspaces.map((workspace) => workspace.id));
-    for (const group of parsed.groups) {
+    for (const group of nonEmptyGroups) {
       if (group.existingWorkspaceId && !existingIds.has(group.existingWorkspaceId)) {
         throw new Error(tr("error.aiUnknownWorkspace", { id: group.existingWorkspaceId }));
       }
     }
     try {
       const workspaceByGroup = new Map<string, string>();
-      for (const group of parsed.groups) {
+      for (const group of nonEmptyGroups) {
         let workspaceId = group.existingWorkspaceId;
         if (!workspaceId) {
           // Cross-window selections intentionally consolidate into the window
@@ -852,13 +865,20 @@ export class BrowserStateEngine {
         }
         workspaceByGroup.set(group.id, workspaceId);
       }
-      for (const group of parsed.groups) {
+      for (const group of nonEmptyGroups) {
         const workspaceId = workspaceByGroup.get(group.id);
         if (!workspaceId) throw new Error(tr("error.aiMissingTarget"));
         await this.moveTabsToWorkspace(group.tabIds, workspaceId, true);
       }
       if (parsed.unclassifiedTabIds.length) {
         await this.moveTabsToUnclassified(parsed.unclassifiedTabIds, this.resolveTargetWindow(undefined, targetWindowKey)?.nativeId, targetWindowKey, true);
+      }
+      const emptiedSourceWorkspaceIds = new Set([...sourceWorkspaceIds].filter((workspaceId) =>
+        !this.state.tabs.some((tab) => tab.workspaceId === workspaceId)
+      ));
+      if (emptiedSourceWorkspaceIds.size) {
+        this.state.workspaces = this.state.workspaces.filter((workspace) => !emptiedSourceWorkspaceIds.has(workspace.id));
+        this.markChanged();
       }
       await this.closeEmptyWindowsAfterMutation();
       await this.syncFromBrowser();
@@ -1158,12 +1178,12 @@ export class BrowserStateEngine {
   }
 
   private async getNativeGroups(windowId: number, tabs: NativeTabLike[]): Promise<NativeGroupLike[]> {
-    const groupIds = new Set<number>();
+    const occupiedGroupIds = new Set<number>();
     const firstTabIndex = new Map<number, number>();
     for (const tab of tabs) {
       const groupId = browserTabGroupId(tab);
       if (groupId !== undefined) {
-        groupIds.add(groupId);
+        occupiedGroupIds.add(groupId);
         const index = Number.isInteger(tab.index) ? tab.index as number : Number.MAX_SAFE_INTEGER;
         firstTabIndex.set(groupId, Math.min(firstTabIndex.get(groupId) ?? Number.MAX_SAFE_INTEGER, index));
       }
@@ -1175,18 +1195,21 @@ export class BrowserStateEngine {
       try {
         const groups = await invokeBrowser<NativeGroupLike[]>(this.api.tabGroups, "query", { windowId });
         if (Array.isArray(groups)) {
-          for (const group of groups) {
-            if (nativeGroupId(group.id) !== undefined) groupIds.add(group.id as number);
-          }
+          // tabGroups.query can briefly retain a group after its final tab was
+          // moved. Only groups backed by the current tab snapshot are real
+          // workspaces; otherwise synchronization recreates a ghost workspace.
           return groups
-            .filter((group) => nativeGroupId(group.id) !== undefined)
+            .filter((group) => {
+              const groupId = nativeGroupId(group.id);
+              return groupId !== undefined && occupiedGroupIds.has(groupId);
+            })
             .sort((left, right) => compareGroupPosition(left.id as number, right.id as number));
         }
       } catch {
         // The tabGroups permission is optional in a few Chromium variants.
       }
     }
-    return [...groupIds].sort(compareGroupPosition).map((id) => ({ id, windowId }));
+    return [...occupiedGroupIds].sort(compareGroupPosition).map((id) => ({ id, windowId }));
   }
 
   private resolveTargetWindow(windowId?: number, windowKey?: string): WindowState | undefined {

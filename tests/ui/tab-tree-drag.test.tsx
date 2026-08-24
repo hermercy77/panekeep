@@ -218,7 +218,56 @@ describe("TabTree drag and drop", () => {
     expect(unclassified).not.toBeNull();
     expect(unclassified?.classList.contains("drop-zone-tab")).toBe(true);
     await act(async () => dispatchDrag(unclassified!, "drop", toUnclassified));
-    expect(onMoveTabs).toHaveBeenNthCalledWith(2, ["tab-a"], null);
+    expect(onMoveTabs).toHaveBeenNthCalledWith(2, ["tab-a"], null, "window:1");
+
+    await act(async () => root.unmount());
+  });
+
+  it("moves an unclassified tab into another window's unclassified section", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const onMoveTabs = vi.fn();
+    const crossWindowSnapshot: TabFridgeSnapshot = {
+      ...snapshot,
+      windows: [
+        snapshot.windows[0],
+        { key: "window:2", nativeId: 2, name: "第二窗口", order: 1, isCurrent: false, expanded: true }
+      ]
+    };
+
+    await act(async () => root.render(
+      <TabTree
+        snapshot={crossWindowSnapshot}
+        query=""
+        filter="all"
+        windowScope="all"
+        workspaceTag=""
+        expandedWindows={new Set(["window:1", "window:2"])}
+        expandedWorkspaces={new Set(["ws-a", "ws-b"])}
+        selectedTabId={null}
+        checkedTabIds={new Set()}
+        onToggleWindow={vi.fn()}
+        onToggleWorkspace={vi.fn()}
+        onActivateTab={vi.fn()}
+        onCheckedTabIdsChange={vi.fn()}
+        onMoveTabs={onMoveTabs}
+        onMoveWorkspace={vi.fn()}
+        onRequestWorkspaceMerge={vi.fn()}
+        onEditWorkspace={vi.fn()}
+        onDeleteWorkspace={vi.fn()}
+        onCreateWorkspace={vi.fn()}
+      />
+    ));
+
+    const source = [...host.querySelectorAll<HTMLElement>(".tab-row")]
+      .find((row) => row.textContent?.includes("未分类标签"));
+    const target = host.querySelectorAll<HTMLElement>(".unclassified-section")[1];
+    const transfer = new TestDataTransfer();
+    await act(async () => dispatchDrag(source!, "dragstart", transfer));
+    expect(target.classList.contains("drop-zone-tab")).toBe(true);
+    await act(async () => dispatchDrag(target, "drop", transfer));
+    expect(onMoveTabs).toHaveBeenCalledWith(["tab-loose"], null, "window:2");
 
     await act(async () => root.unmount());
   });

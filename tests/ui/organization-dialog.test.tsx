@@ -195,6 +195,57 @@ describe("OrganizationDialog selection", () => {
     await act(async () => root.unmount());
   });
 
+  it("removes an AI-suggested workspace when its last tab is reassigned", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const onConfirm = vi.fn(async () => undefined);
+    const preview = {
+      mode: "purpose" as const,
+      sourceTabIds: ["tab-1", "tab-2"],
+      sourceFingerprint: "fixture-fingerprint",
+      groups: [
+        { id: "group-1", name: "Music group", description: "", tags: [], icon: "music" as const, color: "purple", existingWorkspaceId: null, tabIds: ["tab-1"] },
+        { id: "group-2", name: "Search group", description: "", tags: [], icon: "search" as const, color: "blue", existingWorkspaceId: null, tabIds: ["tab-2"] }
+      ],
+      unclassifiedTabIds: []
+    };
+
+    await act(async () => root.render(
+      <OrganizationDialog
+        open
+        tabs={groupedTabs}
+        mode="purpose"
+        preview={preview}
+        loading={false}
+        applying={false}
+        error={null}
+        onModeChange={vi.fn()}
+        onGenerate={vi.fn(async () => undefined)}
+        onConfirm={onConfirm}
+        onClose={vi.fn()}
+      />
+    ));
+
+    const firstHeading = host.querySelectorAll<HTMLButtonElement>(".preview-group-heading")[0];
+    await act(async () => firstHeading.click());
+    const assignment = host.querySelector<HTMLSelectElement>(".preview-tab-row select")!;
+    await act(async () => {
+      assignment.value = "group-2";
+      assignment.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(host.querySelectorAll(".preview-group")).toHaveLength(1);
+    expect(host.textContent).not.toContain("Music group");
+    const confirm = [...host.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("确认并应用"));
+    await act(async () => confirm?.click());
+    const confirmed = onConfirm.mock.calls[0][0];
+    expect(confirmed.groups).toHaveLength(1);
+    expect(confirmed.groups[0]).toMatchObject({ id: "group-2", tabIds: ["tab-2", "tab-1"] });
+    await act(async () => root.unmount());
+  });
+
   it("returns to the checklist while regenerating a preview", async () => {
     const host = document.createElement("div");
     document.body.append(host);

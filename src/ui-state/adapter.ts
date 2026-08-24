@@ -170,12 +170,16 @@ function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabF
       };
       publish();
     },
-    async moveTabs(tabIds, workspaceId) {
+    async moveTabs(tabIds, workspaceId, targetWindowKey) {
       if (workspaceId && !snapshot.workspaces.some((workspace) => workspace.id === workspaceId)) {
         throw new Error(tr("error.targetWorkspaceMissing"));
       }
       const requested = [...new Set(tabIds)];
       const targetWorkspace = workspaceId ? snapshot.workspaces.find((workspace) => workspace.id === workspaceId) : undefined;
+      const targetWindow = workspaceId === null && targetWindowKey
+        ? snapshot.windows.find((window) => window.key === targetWindowKey)
+        : undefined;
+      if (workspaceId === null && targetWindowKey && !targetWindow) throw new Error(tr("error.targetWindowMissing"));
       const movedTabIds: string[] = [];
       const skippedTabIds: string[] = [];
       const nextTabs = snapshot.tabs.map((tab) => {
@@ -191,7 +195,7 @@ function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabF
         return {
           ...tab,
           workspaceId,
-          ...(targetWorkspace ? { windowKey: targetWorkspace.windowKey } : {}),
+          ...(targetWorkspace ? { windowKey: targetWorkspace.windowKey } : targetWindow ? { windowKey: targetWindow.key } : {}),
           ...(workspaceId && (tab.pinned || tab.kind === "fixed") ? { pinned: false, kind: "normal" as const } : {})
         };
       });
@@ -257,8 +261,12 @@ function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabF
       throw new Error(tr("error.configureAI"));
     },
     async applyOrganization(preview) {
+      const nonEmptyGroups = preview.groups.filter((group) => group.tabIds.length > 0);
+      const sourceWorkspaceIds = new Set(snapshot.tabs
+        .filter((tab) => preview.sourceTabIds.includes(tab.id) && tab.workspaceId !== null)
+        .map((tab) => tab.workspaceId as string));
       const workspaceByGroup = new Map<string, string>();
-      for (const group of preview.groups) {
+      for (const group of nonEmptyGroups) {
         let workspaceId = group.existingWorkspaceId;
         if (!workspaceId || !snapshot.workspaces.some((workspace) => workspace.id === workspaceId)) {
           const firstTab = snapshot.tabs.find((tab) => group.tabIds.includes(tab.id));
@@ -275,16 +283,21 @@ function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabF
         workspaceByGroup.set(group.id, workspaceId);
       }
       const groupByTabId = new Map<string, string>();
-      for (const group of preview.groups) {
+      for (const group of nonEmptyGroups) {
         for (const tabId of group.tabIds) groupByTabId.set(tabId, group.id);
       }
+      const nextTabs = snapshot.tabs.map((tab) => {
+        const groupId = groupByTabId.get(tab.id);
+        if (!groupId) return preview.unclassifiedTabIds.includes(tab.id) ? { ...tab, workspaceId: null } : tab;
+        return { ...tab, workspaceId: workspaceByGroup.get(groupId) ?? tab.workspaceId };
+      });
+      const emptiedSourceWorkspaceIds = new Set([...sourceWorkspaceIds].filter((workspaceId) =>
+        !nextTabs.some((tab) => tab.workspaceId === workspaceId)
+      ));
       snapshot = {
         ...snapshot,
-        tabs: snapshot.tabs.map((tab) => {
-          const groupId = groupByTabId.get(tab.id);
-          if (!groupId) return preview.unclassifiedTabIds.includes(tab.id) ? { ...tab, workspaceId: null } : tab;
-          return { ...tab, workspaceId: workspaceByGroup.get(groupId) ?? tab.workspaceId };
-        })
+        workspaces: snapshot.workspaces.filter((workspace) => !emptiedSourceWorkspaceIds.has(workspace.id)),
+        tabs: nextTabs
       };
       publish();
     },
@@ -358,12 +371,12 @@ export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdap
       const result = await bridge("tab.move", { tabId, workspaceId });
       if (result === undefined) await callFallback((adapter) => adapter.moveTab(tabId, workspaceId));
     },
-    async moveTabs(tabIds, workspaceId) {
-      const result = await bridge("tabs.move", { tabIds, workspaceId });
+    async moveTabs(tabIds, workspaceId, targetWindowKey) {
+      const result = await bridge("tabs.move", { tabIds, workspaceId, windowKey: targetWindowKey });
       if (result && typeof result === "object" && "movedTabIds" in result && "skippedTabIds" in result) {
         return result as MoveTabsResponse;
       }
-      return callFallback((adapter) => adapter.moveTabs(tabIds, workspaceId));
+      return callFallback((adapter) => adapter.moveTabs(tabIds, workspaceId, targetWindowKey));
     },
     async moveWorkspace(workspaceId, beforeWorkspaceId) {
       const result = await bridge("workspace.move", { workspaceId, beforeWorkspaceId });

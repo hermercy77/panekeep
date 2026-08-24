@@ -75,7 +75,7 @@ export function OrganizationDialog({
       const unclassifiedTabIds = current.unclassifiedTabIds.filter((id) => id !== tabId);
       if (targetGroupId) groups.find((group) => group.id === targetGroupId)?.tabIds.push(tabId);
       else unclassifiedTabIds.push(tabId);
-      return { ...current, groups, unclassifiedTabIds };
+      return { ...current, groups: groups.filter((group) => group.tabIds.length > 0), unclassifiedTabIds };
     });
   };
 

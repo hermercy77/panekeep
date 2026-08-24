@@ -91,9 +91,9 @@ export function SidePanelApp() {
     await state.deleteWorkspace(target.id);
   };
 
-  const moveCheckedTabs = async (tabIds: string[], workspaceId: string | null) => {
+  const moveCheckedTabs = async (tabIds: string[], workspaceId: string | null, targetWindowKey?: string) => {
     setBatchNotice(null);
-    const outcome = await state.moveTabs(tabIds, workspaceId);
+    const outcome = await state.moveTabs(tabIds, workspaceId, targetWindowKey);
     if (!outcome) return;
     const remainingIds = new Set(outcome.tabs.map((tab) => tab.id));
     setCheckedTabIds(new Set(outcome.skippedTabIds.filter((id) => remainingIds.has(id))));
@@ -239,7 +239,7 @@ export function SidePanelApp() {
               void state.activateTab(id);
             }}
             onCheckedTabIdsChange={setCheckedTabIds}
-            onMoveTabs={(tabIds, workspaceId) => void moveCheckedTabs(tabIds, workspaceId)}
+            onMoveTabs={(tabIds, workspaceId, targetWindowKey) => void moveCheckedTabs(tabIds, workspaceId, targetWindowKey)}
             onMoveWorkspace={(workspaceId, beforeId) => void state.moveWorkspace(workspaceId, beforeId)}
             onRequestWorkspaceMerge={(sourceId, targetId) => void requestWorkspaceMerge(sourceId, targetId)}
             onEditWorkspace={openEditWorkspace}
