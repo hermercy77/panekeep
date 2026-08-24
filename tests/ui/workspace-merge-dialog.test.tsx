@@ -70,13 +70,11 @@ describe("WorkspaceMergeDialog", () => {
       />
     ));
 
-    expect(host.textContent).toContain("将「来源」合并到「目标」？");
-    expect(host.textContent).toContain("合并后共 5 个");
-    expect(host.textContent).toContain("来源网页将移动到目标工作区所在窗口");
-    expect(host.textContent).toContain("来源工作区将被删除");
-    expect(host.textContent).toContain("目标工作区的名称、描述、标签、颜色和图标保持不变");
-    expect(host.textContent).toContain("此操作不提供撤销");
-    const confirm = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("确认合并"));
+    expect(host.textContent).toContain("合并工作区？");
+    expect(host.textContent).toContain("将「来源」的 2 个标签移入「目标」，然后删除来源工作区。此操作不可撤销。");
+    expect(host.textContent).toContain("标签将移至目标窗口");
+    expect(host.textContent).not.toContain("名称、描述、标签、颜色和图标");
+    const confirm = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "合并");
     await act(async () => confirm?.click());
     expect(onConfirm).toHaveBeenCalledWith(preview);
     expect(onClose).not.toHaveBeenCalled();

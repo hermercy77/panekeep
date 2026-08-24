@@ -344,19 +344,15 @@ svg { display: block; flex: 0 0 auto; }
 .dialog-backdrop { position: fixed; z-index: var(--z-modal); inset: 0; display: grid; place-items: center; padding: var(--space-md); background: var(--color-overlay); animation: backdrop-in var(--dur-long) var(--ease-out) both; }
 .dialog-card { width: min(100%, 27rem); max-height: min(86dvh, 42rem); overflow: auto; padding: var(--space-lg); border: var(--rule-thin) solid var(--color-rule-strong); border-radius: var(--radius-lg); color: var(--color-ink); background: var(--color-surface-raised); box-shadow: var(--shadow-whisper); animation: dialog-in var(--dur-long) var(--ease-out) both; }
 .organization-dialog { width: min(100%, 34rem); }
-.merge-dialog { width: min(100%, 31rem); }
-.merge-kicker { display: flex; align-items: center; gap: var(--space-2xs); margin-block-end: var(--space-2xs); color: var(--color-accent); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; }
+.merge-dialog { width: min(100%, 27rem); }
 .merge-flow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--space-xs); margin-block: var(--space-md); }
 .merge-flow > svg { color: var(--color-subtle); }
 .merge-workspace { min-width: 0; min-height: 4rem; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-xs); padding: var(--space-xs); border: var(--rule-thin) solid var(--color-rule); border-radius: var(--radius-sm); background: var(--color-paper-2); }
 .merge-workspace.target { border-color: var(--color-accent); background: var(--color-accent-soft); }
-.merge-workspace > span:nth-child(2) { min-width: 0; display: grid; }
-.merge-workspace small, .merge-workspace strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.merge-workspace small { color: var(--color-muted); font-size: var(--text-2xs); }
-.merge-workspace strong { color: var(--color-ink); font-size: var(--text-xs); }
+.merge-workspace strong { min-width: 0; overflow: hidden; color: var(--color-ink); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
 .merge-workspace b { color: var(--color-subtle); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 500; }
 .merge-summary { margin: 0; color: var(--color-ink-2); font-size: var(--text-sm); }
-.merge-consequences { display: grid; gap: var(--space-2xs); margin: var(--space-sm) 0 0; padding-inline-start: var(--space-lg); color: var(--color-muted); font-size: var(--text-xs); }
+.merge-window-note { margin: var(--space-2xs) 0 0; color: var(--color-muted); font-size: var(--text-xs); }
 .dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-md); margin-block-end: var(--space-md); }
 .dialog-heading h2, .confirm-card h2 { min-width: 0; margin: 0; overflow-wrap: anywhere; font-family: var(--font-display); font-size: var(--text-lg); font-style: normal; font-weight: 680; letter-spacing: -.025em; }
 .dialog-kicker, .dialog-intro { margin: var(--space-2xs) 0 0; color: var(--color-muted); font-size: var(--text-xs); }

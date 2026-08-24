@@ -28,16 +28,12 @@ export function WorkspaceMergeDialog({
   const { t } = useI18n();
   if (!preview || !source || !target) return null;
   const sourceCount = preview.sourceTabIds.length;
-  const total = sourceCount + targetTabCount;
 
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
       <section className="dialog-card merge-dialog" role="dialog" aria-modal="true" aria-labelledby="merge-dialog-title">
         <div className="dialog-heading">
-          <div>
-            <div className="merge-kicker"><GitMerge aria-hidden="true" size={15} />{t("tree.mergeHere")}</div>
-            <h2 id="merge-dialog-title">{t("merge.title", { source: source.name, target: target.name })}</h2>
-          </div>
+          <h2 id="merge-dialog-title">{t("merge.title")}</h2>
           <button className="icon-button" type="button" onClick={onClose} aria-label={t("common.close")} disabled={busy}>
             <X aria-hidden="true" size={18} />
           </button>
@@ -46,24 +42,19 @@ export function WorkspaceMergeDialog({
         <div className="merge-flow" aria-hidden="true">
           <div className="merge-workspace">
             <span className={`workspace-icon workspace-icon-${workspaceColorClass(source.color)}`}><WorkspaceIcon icon={source.icon} /></span>
-            <span><small>{t("merge.source")}</small><strong>{source.name}</strong></span>
+            <strong>{source.name}</strong>
             <b>{sourceCount}</b>
           </div>
           <ArrowRight size={18} />
           <div className="merge-workspace target">
             <span className={`workspace-icon workspace-icon-${workspaceColorClass(target.color)}`}><WorkspaceIcon icon={target.icon} /></span>
-            <span><small>{t("merge.target")}</small><strong>{target.name}</strong></span>
-            <b>{total}</b>
+            <strong>{target.name}</strong>
+            <b>{targetTabCount}</b>
           </div>
         </div>
 
-        <p className="merge-summary">{t("merge.summary", { sourceCount, targetCount: targetTabCount, total })}</p>
-        <ul className="merge-consequences">
-          {preview.sourceWindowKey !== preview.targetWindowKey ? <li>{t("merge.crossWindow")}</li> : null}
-          <li>{t("merge.deleteSource")}</li>
-          <li>{t("merge.keepTarget")}</li>
-          <li>{t("merge.noUndo")}</li>
-        </ul>
+        <p className="merge-summary">{t("merge.summary", { source: source.name, target: target.name, sourceCount })}</p>
+        {preview.sourceWindowKey !== preview.targetWindowKey ? <p className="merge-window-note">{t("merge.crossWindow")}</p> : null}
         {error ? <p className="inline-error" role="alert">{error}</p> : null}
         <div className="dialog-actions">
           <button className="button button-ghost" type="button" onClick={onClose} disabled={busy}>{t("common.cancel")}</button>
