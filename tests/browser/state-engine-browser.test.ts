@@ -209,6 +209,45 @@ function tab(id: number, windowId: number, options: Partial<NativeTab> = {}): Na
 }
 
 describe("BrowserStateEngine with Chromium state", () => {
+  it("coalesces concurrent browser syncs and waits for the final reconciliation", async () => {
+    const fake = new FakeBrowser([{
+      id: 1,
+      type: "normal",
+      focused: true,
+      tabs: [tab(101, 1, { active: true })]
+    }], []);
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+
+    const originalGetAll = fake.api.windows.getAll as () => Promise<NativeWindow[]>;
+    let releaseFirst: (() => void) | undefined;
+    let calls = 0;
+    fake.api.windows.getAll = async () => {
+      calls += 1;
+      const captured = await originalGetAll();
+      if (calls === 1) await new Promise<void>((resolve) => { releaseFirst = resolve; });
+      return captured;
+    };
+
+    const first = engine.syncFromBrowser();
+    await vi.waitFor(() => expect(releaseFirst).toBeTypeOf("function"));
+    fake.windows[0].tabs.push(tab(102, 1, { index: 1 }));
+    let secondResolved = false;
+    const second = engine.syncFromBrowser().then((value) => {
+      secondResolved = true;
+      return value;
+    });
+    await Promise.resolve();
+    expect(secondResolved).toBe(false);
+
+    releaseFirst?.();
+    await Promise.all([first, second]);
+
+    expect(calls).toBe(2);
+    expect(engine.getState().tabs.map((item) => item.id)).toContain("102");
+    await engine.stop();
+  });
+
   it("moves valid batch members, reports skipped tabs, and treats tabs already at the target as successful", async () => {
     const fake = new FakeBrowser([
       {

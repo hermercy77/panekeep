@@ -107,7 +107,9 @@ Certify that data is not sold, used for advertising, used for creditworthiness, 
 - Store icon: upload `public/icons/icon-128.png`
 - English small promo tile: `store-assets/promo-small-en.png`
 - Simplified Chinese small promo tile: `store-assets/promo-small-zh-CN.png`
-- Screenshots: pending native-browser acceptance; use 1280×800 PNG, full bleed, and actual current UI
+- Simplified Chinese screenshot: `store-assets/screenshots/zh-CN-workspaces.png`
+- English screenshot: `store-assets/screenshots/en-ai-settings.png`
+- Both screenshots are 1280×800 PNG, full bleed, and generated from the isolated native-Chromium acceptance flow
 
 ## Reviewer notes
 

@@ -29,6 +29,7 @@
     "eval:ai": "vite-node scripts/evaluate-ai.ts",
     "eval:ai:live": "vite-node scripts/evaluate-ai.ts --live",
     "verify:release": "node scripts/verify-release.mjs",
+    "test:native:chrome": "python3 scripts/verify-native-chrome.py",
     "release:check": "npm run typecheck && npm run test:i18n && npm test -- --run && npm run eval:ai && npm run build && npm run build:edge && npm run verify:release && npm audit --audit-level=low"
   },
   "dependencies": {

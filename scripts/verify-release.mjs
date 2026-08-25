@@ -71,4 +71,12 @@ for (const locale of ["en", "zh-CN"]) {
   assert(image.width === 440 && image.height === 280, `${file} must be 440x280`);
 }
 
+for (const file of [
+  "store-assets/screenshots/zh-CN-workspaces.png",
+  "store-assets/screenshots/en-ai-settings.png"
+]) {
+  const image = await pngDimensions(file);
+  assert(image.width === 1280 && image.height === 800, `${file} must be 1280x800`);
+}
+
 console.log(`PaneKeep ${packageJson.version} release assets verified for Chrome and Edge.`);

@@ -127,7 +127,7 @@ export class BrowserStateEngine {
   private readonly removeListeners: Array<() => void> = [];
   private syncTimer: ReturnType<typeof setTimeout> | undefined;
   private cleanupTimer: ReturnType<typeof setTimeout> | undefined;
-  private syncing = false;
+  private syncPromise: Promise<void> | undefined;
   private syncAgain = false;
   private started = false;
 
@@ -183,19 +183,23 @@ export class BrowserStateEngine {
   /** Full reconciliation used at startup and after browser event bursts. */
   async syncFromBrowser(): Promise<BrowserStateResponse> {
     if (!this.api) return this.getState();
-    if (this.syncing) {
+    if (this.syncPromise) {
       this.syncAgain = true;
+      await this.syncPromise;
       return this.getState();
     }
 
-    this.syncing = true;
-    try {
+    const sync = (async () => {
       do {
         this.syncAgain = false;
         await this.performSync();
       } while (this.syncAgain);
+    })();
+    this.syncPromise = sync;
+    try {
+      await sync;
     } finally {
-      this.syncing = false;
+      if (this.syncPromise === sync) this.syncPromise = undefined;
     }
     return this.getState();
   }
