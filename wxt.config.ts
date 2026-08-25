@@ -6,7 +6,7 @@ export default defineConfig({
     name: "__MSG_extensionName__",
     description: "__MSG_extensionDescription__",
     default_locale: "zh_CN",
-    version: "0.1.0",
+    version: "0.1.1",
     permissions: [
       "tabs",
       "tabGroups",

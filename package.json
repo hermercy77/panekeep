@@ -1,7 +1,7 @@
 {
   "name": "panekeep",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local-first Chrome and Edge tab workspaces with optional user-initiated AI organization.",
   "license": "Apache-2.0",
   "repository": {
