@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">PaneKeep icon</title>
+  <desc id="desc">Three browser panes held together by an open keeper bracket.</desc>
+  <path
+    d="M23 43v50c0 11 9 19 20 19h42c11 0 20-8 20-19V43"
+    fill="none"
+    stroke="#155EEF"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="14"
+  />
+  <rect x="32" y="16" width="64" height="24" rx="7" fill="#155EEF" />
+  <rect x="32" y="47" width="64" height="24" rx="7" fill="#155EEF" />
+  <rect x="32" y="78" width="64" height="24" rx="7" fill="#102A56" />
+</svg>

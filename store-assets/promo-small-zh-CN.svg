@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 280" role="img" aria-labelledby="title desc">
+  <title id="title">PaneKeep 推广图</title>
+  <desc id="desc">冷色纸张背景上的 PaneKeep 图标和名称。</desc>
+  <rect width="440" height="280" fill="#F4F7FC" />
+  <path d="M0 40h440M0 240h440" stroke="#DCE5F3" stroke-width="1" />
+  <g transform="translate(42 76)">
+    <path d="M23 43v50c0 11 9 19 20 19h42c11 0 20-8 20-19V43" fill="none" stroke="#155EEF" stroke-linecap="round" stroke-linejoin="round" stroke-width="14" />
+    <rect x="32" y="16" width="64" height="24" rx="7" fill="#155EEF" />
+    <rect x="32" y="47" width="64" height="24" rx="7" fill="#155EEF" />
+    <rect x="32" y="78" width="64" height="24" rx="7" fill="#102A56" />
+  </g>
+  <text x="190" y="132" fill="#102A56" font-family="Space Grotesk, Avenir Next, sans-serif" font-size="46" font-weight="650" letter-spacing="-1.5">PaneKeep</text>
+  <text x="193" y="164" fill="#53657D" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="16" font-weight="600" letter-spacing="2">标签工作区</text>
+  <rect x="193" y="185" width="126" height="4" rx="2" fill="#155EEF" />
+</svg>

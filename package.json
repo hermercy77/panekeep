@@ -21,12 +21,15 @@
     "build": "wxt build",
     "build:edge": "wxt build -b edge",
     "build:zip": "wxt zip",
+    "build:zip:edge": "wxt zip -b edge",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:i18n": "vitest run tests/i18n",
     "test:watch": "vitest",
     "eval:ai": "vite-node scripts/evaluate-ai.ts",
-    "eval:ai:live": "vite-node scripts/evaluate-ai.ts --live"
+    "eval:ai:live": "vite-node scripts/evaluate-ai.ts --live",
+    "verify:release": "node scripts/verify-release.mjs",
+    "release:check": "npm run typecheck && npm run test:i18n && npm test -- --run && npm run eval:ai && npm run build && npm run build:edge && npm run verify:release && npm audit --audit-level=low"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.1.0",
