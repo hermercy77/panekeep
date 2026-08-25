@@ -1,6 +1,7 @@
 export const APP_LANGUAGES = ["zh-CN", "en"] as const;
 export type AppLanguage = (typeof APP_LANGUAGES)[number];
 export const DEFAULT_APP_LANGUAGE: AppLanguage = "zh-CN";
+/** Preserve the original key so existing unpacked installations keep their language choice. */
 export const APP_LANGUAGE_STORAGE_KEY = "tab-fridge.language";
 
 type Variables = Record<string, string | number | undefined>;
@@ -10,7 +11,8 @@ const zhCN = {
   "language.label": "语言",
   "language.zhCN": "中文",
   "language.en": "English",
-  "extension.actionTitle": "打开或关闭 Tab Fridge",
+  "brand.name": "PaneKeep",
+  "extension.actionTitle": "打开或关闭 PaneKeep",
   "common.close": "关闭",
   "common.cancel": "取消",
   "common.edit": "编辑",
@@ -287,8 +289,8 @@ const zhCN = {
   "browser.methodUnavailable": ({ method }) => `浏览器 API 方法不可用：${method}`,
   "browser.normalTabRequired": "至少需要一个普通标签才能创建原生标签组",
   "browser.invalidGroupId": "浏览器没有返回有效的原生标签组 ID",
-  "background.unknownRequest": ({ action }) => `未知的 Tab Fridge 请求：${action}`,
-  "background.initFailed": "Tab Fridge 后台引擎初始化失败",
+  "background.unknownRequest": ({ action }) => `未知的 PaneKeep 请求：${action}`,
+  "background.initFailed": "PaneKeep 后台引擎初始化失败",
   "backup.importWorkspace": "导入工作区",
   "backup.copySuffix": "（副本）",
   "backup.numberedSuffix": ({ count }) => `（${count}）`,
@@ -303,7 +305,8 @@ const en: Record<MessageKey, Message> = {
   "language.label": "Language",
   "language.zhCN": "中文",
   "language.en": "English",
-  "extension.actionTitle": "Open or close Tab Fridge",
+  "brand.name": "PaneKeep",
+  "extension.actionTitle": "Open or close PaneKeep",
   "common.close": "Close",
   "common.cancel": "Cancel",
   "common.edit": "Edit",
@@ -580,8 +583,8 @@ const en: Record<MessageKey, Message> = {
   "browser.methodUnavailable": ({ method }) => `Browser API method is unavailable: ${method}`,
   "browser.normalTabRequired": "At least one normal tab is required to create a native group",
   "browser.invalidGroupId": "The browser did not return a valid native group ID",
-  "background.unknownRequest": ({ action }) => `Unknown Tab Fridge request: ${action}`,
-  "background.initFailed": "The Tab Fridge background engine failed to initialize",
+  "background.unknownRequest": ({ action }) => `Unknown PaneKeep request: ${action}`,
+  "background.initFailed": "The PaneKeep background engine failed to initialize",
   "backup.importWorkspace": "Imported workspace",
   "backup.copySuffix": " (copy)",
   "backup.numberedSuffix": ({ count }) => ` (${count})`,

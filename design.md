@@ -1,4 +1,4 @@
-# Design — Tab Fridge
+# Design — PaneKeep
 
 A locked design system for the browser extension. Side panel and management page
 share this system; individual pages may vary density, never theme or typography.

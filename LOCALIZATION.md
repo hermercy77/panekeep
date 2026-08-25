@@ -1,6 +1,6 @@
 # Localization rule
 
-Tab Fridge ships every user-facing feature in all supported languages at the same time.
+PaneKeep ships every user-facing feature in all supported languages at the same time.
 
 Current locales:
 

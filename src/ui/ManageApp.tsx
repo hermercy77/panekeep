@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, CircleAlert, CircleCheck, DatabaseBackup, Download, Plus, Rows3, Settings2, Upload, X } from "lucide-react";
 import { isWorkspaceClosableTab, type AIConfig, type Workspace } from "../shared/contracts";
-import { useTabFridgeState } from "../ui-state/useTabFridgeState";
+import { usePaneKeepState } from "../ui-state/usePaneKeepState";
 import { WorkspaceDialog } from "./WorkspaceDialog";
 import { createAIConfigStore, DEFAULT_AI_CONFIG } from "../ai/config";
 import { createOpenAICompatibleClient } from "../ai/client";
@@ -24,7 +24,7 @@ function sidepanelUrl(): string {
 
 export function ManageApp() {
   const { language, setLanguage, t } = useI18n();
-  const state = useTabFridgeState();
+  const state = usePaneKeepState();
   const { snapshot } = state;
   const [dialog, setDialog] = useState<{ windowKey: string; workspace?: Workspace } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -85,7 +85,7 @@ export function ManageApp() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `tab-fridge-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.download = `panekeep-backup-${new Date().toISOString().slice(0, 10)}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
     setNotice({ tone: "success", message: t("notice.backupExported") });
@@ -163,7 +163,7 @@ export function ManageApp() {
         <div className="brand-lockup">
           <div className="brand-mark" aria-hidden="true"><Rows3 size={18} /></div>
           <div>
-            <h1>Tab Fridge</h1>
+            <h1>{t("brand.name")}</h1>
             <p>{t("manage.subtitle")}</p>
           </div>
         </div>

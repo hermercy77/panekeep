@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CircleAlert, RefreshCw, Rows3, ScanLine, Search, Settings2, X } from "lucide-react";
 import { isWorkspaceClosableTab, type OrganizationMode, type OrganizationPreview, type Workspace, type WorkspaceMergePreview } from "../shared/contracts";
-import { useTabFridgeState } from "../ui-state/useTabFridgeState";
+import { usePaneKeepState } from "../ui-state/usePaneKeepState";
 import { OrganizationDialog } from "./OrganizationDialog";
 import { TabTree, type TabFilter, type WindowScope } from "./TabTree";
 import { WorkspaceDialog } from "./WorkspaceDialog";
@@ -26,7 +26,7 @@ function currentWindowKey(windows: { key: string; isCurrent: boolean }[]): strin
 
 export function SidePanelApp() {
   const { t } = useI18n();
-  const state = useTabFridgeState();
+  const state = usePaneKeepState();
   const { snapshot } = state;
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<TabFilter>("all");
@@ -166,7 +166,7 @@ export function SidePanelApp() {
             <Rows3 size={18} />
           </div>
           <div>
-            <h1>Tab Fridge</h1>
+            <h1>{t("brand.name")}</h1>
             <p>{t("side.subtitle")}</p>
           </div>
         </div>

@@ -1,6 +1,6 @@
 # AI organization evaluation
 
-This suite evaluates Tab Fridge without opening a browser or visiting any page. It sends only the synthetic title and URL data in `evals/ai/dataset.ts`.
+This suite evaluates PaneKeep without opening a browser or visiting any page. It sends only the synthetic title and URL data in `evals/ai/dataset.ts`.
 
 ## What it measures
 
@@ -37,8 +37,8 @@ npm run eval:ai -- \
 Provide the key through an environment variable. It is sent only to the configured provider and is never written to the report.
 
 ```bash
-read -s TAB_FRIDGE_AI_API_KEY
-export TAB_FRIDGE_AI_API_KEY
+read -s PANEKEEP_AI_API_KEY
+export PANEKEEP_AI_API_KEY
 
 npm run eval:ai:live -- \
   --base-url https://api.deepseek.com/v1 \

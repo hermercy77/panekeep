@@ -66,7 +66,7 @@ async function configureSidePanelAction(api: BrowserLike, language: AppLanguage)
   try {
     await invokeBrowser<void>(api.sidePanel, "setPanelBehavior", { openPanelOnActionClick: true });
   } catch (error) {
-    console.warn("Tab Fridge could not enable toolbar side-panel toggling", error);
+    console.warn("PaneKeep could not enable toolbar side-panel toggling", error);
   }
 }
 

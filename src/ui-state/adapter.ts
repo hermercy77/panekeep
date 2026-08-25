@@ -12,8 +12,8 @@ import {
   emptySnapshot,
   makeId,
   normalizeSnapshot,
-  type TabFridgeAdapter,
-  type TabFridgeSnapshot,
+  type PaneKeepAdapter,
+  type PaneKeepSnapshot,
   type WorkspaceDraft
 } from "./model";
 import { getAppLanguage, translate, type MessageKey } from "../i18n";
@@ -111,16 +111,16 @@ async function withTimeout<T>(
   }
 }
 
-function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabFridgeAdapter {
+function createInMemoryAdapter(initial: PaneKeepSnapshot = emptySnapshot): PaneKeepAdapter {
   let snapshot = cloneSnapshot(initial);
-  const listeners = new Set<(next: TabFridgeSnapshot) => void>();
+  const listeners = new Set<(next: PaneKeepSnapshot) => void>();
 
   const publish = () => {
     const next = cloneSnapshot(snapshot);
     for (const listener of listeners) listener(next);
   };
 
-  const adapter: TabFridgeAdapter & { replaceSnapshot: (next: TabFridgeSnapshot) => void } = {
+  const adapter: PaneKeepAdapter & { replaceSnapshot: (next: PaneKeepSnapshot) => void } = {
     async getSnapshot() {
       return cloneSnapshot(snapshot);
     },
@@ -327,7 +327,7 @@ function createInMemoryAdapter(initial: TabFridgeSnapshot = emptySnapshot): TabF
  * background/database layer exposes its final message envelope, only this
  * file needs to change; the sidepanel and manage page remain contract-only.
  */
-export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdapter {
+export function createBrowserAdapter(initial?: PaneKeepSnapshot): PaneKeepAdapter {
   const fallback = createInMemoryAdapter(initial);
   const bridge = async (action: string, payload?: unknown): Promise<unknown> => {
     const runtime = getRuntime();
@@ -340,7 +340,7 @@ export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdap
       if (remoteSnapshot) {
         // Keep the fallback in sync for operations unsupported by an older
         // background build and for browser reloads while this page is open.
-        const replace = (fallback as TabFridgeAdapter & { replaceSnapshot?: (next: TabFridgeSnapshot) => void }).replaceSnapshot;
+        const replace = (fallback as PaneKeepAdapter & { replaceSnapshot?: (next: PaneKeepSnapshot) => void }).replaceSnapshot;
         replace?.(remoteSnapshot);
       }
       return response.result ?? response.data ?? response;
@@ -350,7 +350,7 @@ export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdap
     }
   };
 
-  const callFallback = async <T>(operation: (adapter: TabFridgeAdapter) => Promise<T>): Promise<T> => operation(fallback);
+  const callFallback = async <T>(operation: (adapter: PaneKeepAdapter) => Promise<T>): Promise<T> => operation(fallback);
 
   return {
     async getSnapshot() {
@@ -464,7 +464,7 @@ export function createBrowserAdapter(initial?: TabFridgeSnapshot): TabFridgeAdap
         clearRefreshWatchdog();
         const snapshot = normalizeSnapshot(message.snapshot);
         if (!snapshot) return false;
-        const replace = (fallback as TabFridgeAdapter & { replaceSnapshot?: (next: TabFridgeSnapshot) => void }).replaceSnapshot;
+        const replace = (fallback as PaneKeepAdapter & { replaceSnapshot?: (next: PaneKeepSnapshot) => void }).replaceSnapshot;
         replace?.(snapshot);
         return false;
       };

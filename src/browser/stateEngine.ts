@@ -112,7 +112,7 @@ function tr(key: Parameters<typeof translate>[1], variables?: Record<string, str
 
 /**
  * Synchronizes Chromium windows, tabs and native tab groups into the local
- * Tab Fridge model. Browser state is authoritative for membership; IndexedDB
+ * PaneKeep model. Browser state is authoritative for membership; IndexedDB
  * holds user-facing metadata such as workspace descriptions and ordering.
  */
 export class BrowserStateEngine {
@@ -663,27 +663,27 @@ export class BrowserStateEngine {
 
   async handleRequest(request: BackgroundRequest): Promise<unknown> {
     switch (request.type) {
-      case "tab-fridge/get-state":
+      case "panekeep/get-state":
         return this.getState();
-      case "tab-fridge/refresh":
+      case "panekeep/refresh":
         return this.syncFromBrowser();
-      case "tab-fridge/export-backup":
+      case "panekeep/export-backup":
         return { backup: await this.exportBackup(false), json: request.asJson ? await this.exportBackup(true) : undefined };
-      case "tab-fridge/import-backup":
+      case "panekeep/import-backup":
         return this.importBackup(request.backup);
-      case "tab-fridge/create-workspace":
+      case "panekeep/create-workspace":
         return this.createWorkspace(request);
-      case "tab-fridge/update-workspace":
+      case "panekeep/update-workspace":
         return this.updateWorkspace(request.workspaceId, request.patch);
-      case "tab-fridge/delete-workspace":
+      case "panekeep/delete-workspace":
         return this.deleteWorkspace(request.workspaceId, request.closeTabs === true);
-      case "tab-fridge/merge-workspaces":
+      case "panekeep/merge-workspaces":
         return this.mergeWorkspaces(request.preview);
-      case "tab-fridge/move-tabs":
+      case "panekeep/move-tabs":
         return this.moveTabs(request);
-      case "tab-fridge/ungroup-tabs":
+      case "panekeep/ungroup-tabs":
         return this.ungroupTabs(request.tabIds);
-      case "tab-fridge/close-empty-windows":
+      case "panekeep/close-empty-windows":
         return this.closeEmptyWindows();
       default:
         throw new Error(tr("background.unknownRequest", { action: (request as { type: string }).type }));

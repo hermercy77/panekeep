@@ -1,6 +1,6 @@
 import type { Backup } from "../shared/contracts";
 import { createBackup, parseBackup, type StateSnapshot } from "../shared/backup";
-import { db, readSnapshot, replaceSnapshot, type TabFridgeDatabase } from "./db";
+import { db, readSnapshot, replaceSnapshot, type PaneKeepDatabase } from "./db";
 
 export interface StateRepository {
   load(): Promise<StateSnapshot>;
@@ -8,7 +8,7 @@ export interface StateRepository {
 }
 
 export class DexieStateRepository implements StateRepository {
-  constructor(private readonly database: TabFridgeDatabase = db) {}
+  constructor(private readonly database: PaneKeepDatabase = db) {}
 
   load(): Promise<StateSnapshot> {
     return readSnapshot(this.database);
@@ -65,4 +65,3 @@ function cloneSnapshot(snapshot: StateSnapshot): StateSnapshot {
     tabs: snapshot.tabs.map((tab) => ({ ...tab }))
   };
 }
-

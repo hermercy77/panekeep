@@ -1,5 +1,5 @@
 {
-  "extensionName": { "message": "Tab Fridge" },
+  "extensionName": { "message": "PaneKeep" },
   "extensionDescription": { "message": "本地优先、安全整理浏览器标签的工作区工具。" },
-  "actionTitle": { "message": "打开或关闭 Tab Fridge" }
+  "actionTitle": { "message": "打开或关闭 PaneKeep" }
 }

@@ -1,4 +1,4 @@
-# Contributing to Tab Fridge
+# Contributing to PaneKeep
 
 Thank you for helping improve the project. Changes should stay focused on the extension's single purpose: local-first browser tab workspaces with optional, user-initiated AI organization.
 
@@ -48,4 +48,4 @@ Every user-visible change must ship in both Simplified Chinese (`zh-CN`) and Eng
 - Include real Chrome or Edge verification notes for browser-native behavior.
 - Do not include generated `.output`, `.wxt`, coverage, or local evaluation artifacts.
 
-By contributing, you agree that your contribution is provided under the repository's license once that license is adopted.
+By contributing, you agree that your contribution is provided under the Apache License 2.0 used by this repository.

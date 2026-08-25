@@ -8,7 +8,7 @@ Effective date: 2026-08-25
 
 ### 简要说明
 
-Tab Fridge 是一款本地优先的浏览器标签工作区扩展。开发者不运营用于接收标签数据、AI 请求或使用分析数据的服务器。除非你主动使用 AI 功能，否则标签与工作区数据不会离开你的浏览器。
+PaneKeep 是一款本地优先的浏览器标签工作区扩展。开发者不运营用于接收标签数据、AI 请求或使用分析数据的服务器。除非你主动使用 AI 功能，否则标签与工作区数据不会离开你的浏览器。
 
 ### 本地处理和保存的数据
 
@@ -58,7 +58,7 @@ AI 功能默认由用户配置，并且只在你主动测试连接或生成整�
 
 ### 联系方式与政策更新
 
-隐私问题可以通过 [GitHub Issues](https://github.com/hermercy77/tab-fridge/issues) 联系开发者。安全漏洞请不要公开提交 Issue，请按照 [SECURITY.md](./SECURITY.md) 私下报告。
+隐私问题可以通过 [GitHub Issues](https://github.com/hermercy77/panekeep/issues) 联系开发者。安全漏洞请不要公开提交 Issue，请按照 [SECURITY.md](./SECURITY.md) 私下报告。
 
 如果数据处理方式发生变化，本政策、商店隐私申报和扩展内提示会在变化生效前同步更新。
 
@@ -68,7 +68,7 @@ AI 功能默认由用户配置，并且只在你主动测试连接或生成整�
 
 ### Summary
 
-Tab Fridge is a local-first browser tab workspace extension. The developer does not operate a server that receives tab data, AI requests, telemetry, or usage analytics. Tab and workspace data does not leave your browser unless you deliberately use an AI feature.
+PaneKeep is a local-first browser tab workspace extension. The developer does not operate a server that receives tab data, AI requests, telemetry, or usage analytics. Tab and workspace data does not leave your browser unless you deliberately use an AI feature.
 
 ### Data processed and stored locally
 
@@ -118,6 +118,6 @@ The use of information received from Chrome extension APIs adheres to the Chrome
 
 ### Contact and changes
 
-For privacy questions, contact the developer through [GitHub Issues](https://github.com/hermercy77/tab-fridge/issues). Do not disclose security vulnerabilities in a public issue; follow [SECURITY.md](./SECURITY.md) for private reporting.
+For privacy questions, contact the developer through [GitHub Issues](https://github.com/hermercy77/panekeep/issues). Do not disclose security vulnerabilities in a public issue; follow [SECURITY.md](./SECURITY.md) for private reporting.
 
 If data handling changes, this policy, the store privacy disclosures, and in-product notices will be updated before the change takes effect.

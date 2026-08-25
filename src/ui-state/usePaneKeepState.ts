@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OrganizationMode, OrganizationPreview, Workspace, WorkspaceMergePreview } from "../shared/contracts";
 import { createBrowserAdapter } from "./adapter";
-import type { TabFridgeAdapter, TabFridgeSnapshot, WorkspaceDraft } from "./model";
+import type { PaneKeepAdapter, PaneKeepSnapshot, WorkspaceDraft } from "./model";
 import { emptySnapshot } from "./model";
 import { getAppLanguage, translate } from "../i18n";
 import type { BackupImportResult } from "../shared/backup";
@@ -9,8 +9,8 @@ import type { MoveTabsResponse } from "../shared/messages";
 
 export type UiLoadState = "loading" | "ready" | "error";
 
-export interface UseTabFridgeStateResult {
-  snapshot: TabFridgeSnapshot;
+export interface UsePaneKeepStateResult {
+  snapshot: PaneKeepSnapshot;
   status: UiLoadState;
   error: string | null;
   refresh: () => Promise<void>;
@@ -34,9 +34,9 @@ function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : translate(getAppLanguage(), "error.generic");
 }
 
-export function useTabFridgeState(adapter?: TabFridgeAdapter): UseTabFridgeStateResult {
+export function usePaneKeepState(adapter?: PaneKeepAdapter): UsePaneKeepStateResult {
   const stableAdapter = useMemo(() => adapter ?? createBrowserAdapter(), [adapter]);
-  const [snapshot, setSnapshot] = useState<TabFridgeSnapshot>(emptySnapshot);
+  const [snapshot, setSnapshot] = useState<PaneKeepSnapshot>(emptySnapshot);
   const [status, setStatus] = useState<UiLoadState>("loading");
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);

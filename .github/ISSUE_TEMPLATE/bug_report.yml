@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem in Tab Fridge
+description: Report a reproducible problem in PaneKeep
 title: "[Bug]: "
 labels: [bug]
 body:

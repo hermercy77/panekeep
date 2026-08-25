@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { WORKSPACE_ICON_KEYS } from "./workspaceAppearance";
+import { LEGACY_TAB_FRIDGE_PRODUCT, PANEKEEP_PRODUCT } from "./constants";
 
 export const tabKindSchema = z.enum(["normal", "special", "fixed"]);
 export type TabKind = z.infer<typeof tabKindSchema>;
@@ -102,7 +103,7 @@ export type WorkspaceMergePreview = z.infer<typeof workspaceMergePreviewSchema>;
 
 export const backupSchema = z.object({
   schemaVersion: z.literal(1),
-  product: z.literal("tab-fridge"),
+  product: z.enum([PANEKEEP_PRODUCT, LEGACY_TAB_FRIDGE_PRODUCT]),
   browserFamily: z.string(),
   exportedAt: z.string(),
   windows: z.array(windowStateSchema),

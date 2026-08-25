@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } 
 import { AppWindow, ChevronDown, ChevronRight, GripVertical, Inbox, MoreHorizontal, Pencil, Pin, Plus, Rows3, ShieldAlert, Trash2, X } from "lucide-react";
 import type { TabRecord, WindowState, Workspace } from "../shared/contracts";
 import { tabHost, tabLabel } from "../ui-state/model";
-import type { TabFridgeSnapshot } from "../ui-state/model";
+import type { PaneKeepSnapshot } from "../ui-state/model";
 import { workspaceColorClass } from "./workspaceColors";
 import { useI18n } from "../i18n/react";
 import { WorkspaceIcon } from "./WorkspaceIcon";
@@ -11,7 +11,7 @@ export type TabFilter = "all" | "unclassified";
 export type WindowScope = "all" | "current";
 
 interface TabTreeProps {
-  snapshot: TabFridgeSnapshot;
+  snapshot: PaneKeepSnapshot;
   query: string;
   filter: TabFilter;
   windowScope: WindowScope;
@@ -39,7 +39,7 @@ type WorkspaceDropZone = "before" | "merge" | "after";
 type TabSectionKind = "fixed" | "unclassified" | "special";
 
 function parseDrag(event: DragEvent): DragPayload | null {
-  const raw = event.dataTransfer.getData("application/x-tab-fridge");
+  const raw = event.dataTransfer.getData("application/x-panekeep");
   if (!raw) return null;
   try {
     const data = JSON.parse(raw) as DragPayload | { type: "tab"; id: string };
@@ -54,7 +54,7 @@ function parseDrag(event: DragEvent): DragPayload | null {
 
 function writeDrag(event: DragEvent, payload: DragPayload): void {
   event.dataTransfer.effectAllowed = "move";
-  event.dataTransfer.setData("application/x-tab-fridge", JSON.stringify(payload));
+  event.dataTransfer.setData("application/x-panekeep", JSON.stringify(payload));
 }
 
 function setBatchDragImage(event: DragEvent, title: string, count: number): void {

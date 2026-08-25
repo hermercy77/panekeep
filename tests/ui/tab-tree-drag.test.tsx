@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TabTree, dragAutoScrollVelocity } from "../../src/ui/TabTree";
-import type { TabFridgeSnapshot } from "../../src/ui-state/model";
+import type { PaneKeepSnapshot } from "../../src/ui-state/model";
 import { setAppLanguage } from "../../src/i18n";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -36,7 +36,7 @@ function dispatchDrag(target: Element, type: string, dataTransfer: TestDataTrans
   target.dispatchEvent(event);
 }
 
-const snapshot: TabFridgeSnapshot = {
+const snapshot: PaneKeepSnapshot = {
   windows: [{ key: "window:1", nativeId: 1, name: "当前窗口", order: 0, isCurrent: true, expanded: true }],
   workspaces: [
     { id: "ws-a", windowKey: "window:1", name: "项目 A", description: "", tags: [], color: "blue", groupId: 1, order: 0, createdAt: 1, updatedAt: 1 },
@@ -146,7 +146,7 @@ describe("TabTree drag and drop", () => {
     const source = [...host.querySelectorAll<HTMLElement>(".tab-row")].find((row) => row.textContent?.includes("项目 A 标签"));
     const transfer = new TestDataTransfer();
     await act(async () => dispatchDrag(source!, "dragstart", transfer));
-    expect(JSON.parse(transfer.getData("application/x-tab-fridge"))).toEqual({ type: "tabs", ids: ["tab-a", "tab-loose"], anchorId: "tab-a" });
+    expect(JSON.parse(transfer.getData("application/x-panekeep"))).toEqual({ type: "tabs", ids: ["tab-a", "tab-loose"], anchorId: "tab-a" });
     expect(transfer.dragImage?.querySelector(".tab-drag-ghost-count")?.textContent).toBe("2");
     expect(host.querySelectorAll(".tab-row.dragging-source")).toHaveLength(2);
     const cancel = host.querySelector<HTMLElement>(".drag-cancel-zone");
@@ -215,7 +215,7 @@ describe("TabTree drag and drop", () => {
     const sourceHandle = source?.querySelector<HTMLButtonElement>(".tab-activate");
     expect(sourceHandle?.draggable).toBe(true);
     await act(async () => dispatchDrag(sourceHandle!, "dragstart", toWorkspace));
-    expect(JSON.parse(toWorkspace.getData("application/x-tab-fridge"))).toEqual({ type: "tabs", ids: ["tab-a"], anchorId: "tab-a" });
+    expect(JSON.parse(toWorkspace.getData("application/x-panekeep"))).toEqual({ type: "tabs", ids: ["tab-a"], anchorId: "tab-a" });
     expect(workspaces[1].classList.contains("drop-zone-tab")).toBe(true);
 
     await act(async () => dispatchDrag(workspaces[1], "dragenter", toWorkspace));
@@ -240,7 +240,7 @@ describe("TabTree drag and drop", () => {
     document.body.append(host);
     const root = createRoot(host);
     const onMoveTabs = vi.fn();
-    const crossWindowSnapshot: TabFridgeSnapshot = {
+    const crossWindowSnapshot: PaneKeepSnapshot = {
       ...snapshot,
       windows: [
         snapshot.windows[0],
@@ -389,7 +389,7 @@ describe("TabTree drag and drop", () => {
     const root = createRoot(host);
     const onMoveWorkspace = vi.fn();
     const onRequestWorkspaceMerge = vi.fn();
-    const twoWindowSnapshot: TabFridgeSnapshot = {
+    const twoWindowSnapshot: PaneKeepSnapshot = {
       windows: [
         ...snapshot.windows,
         { key: "window:2", nativeId: 2, name: "第二窗口", order: 1, isCurrent: false, expanded: true }
@@ -461,7 +461,7 @@ describe("TabTree drag and drop", () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-    const compactSnapshot: TabFridgeSnapshot = {
+    const compactSnapshot: PaneKeepSnapshot = {
       ...snapshot,
       workspaces: [snapshot.workspaces[0]],
       tabs: [snapshot.tabs[0]]
@@ -516,7 +516,7 @@ describe("TabTree drag and drop", () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-    const recentSnapshot: TabFridgeSnapshot = {
+    const recentSnapshot: PaneKeepSnapshot = {
       ...snapshot,
       tabs: snapshot.tabs.map((item, index) => index === 0
         ? { ...item, lastActivatedAt: Date.now() - 5 * 60_000 }

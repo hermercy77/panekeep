@@ -1,21 +1,21 @@
 import type { Backup, OrganizationMode, TabRecord, Workspace, WorkspaceMergePreview } from "./contracts";
 
-export const UI_MESSAGE_SOURCE = "tab-fridge-ui" as const;
-export const BACKGROUND_MESSAGE_SOURCE = "tab-fridge-background" as const;
+export const UI_MESSAGE_SOURCE = "panekeep-ui" as const;
+export const BACKGROUND_MESSAGE_SOURCE = "panekeep-background" as const;
 export const STATE_UPDATED_ACTION = "state.updated" as const;
 
 export const MESSAGE_TYPES = {
-  getState: "tab-fridge/get-state",
-  refresh: "tab-fridge/refresh",
-  exportBackup: "tab-fridge/export-backup",
-  importBackup: "tab-fridge/import-backup",
-  createWorkspace: "tab-fridge/create-workspace",
-  updateWorkspace: "tab-fridge/update-workspace",
-  deleteWorkspace: "tab-fridge/delete-workspace",
-  mergeWorkspaces: "tab-fridge/merge-workspaces",
-  moveTabs: "tab-fridge/move-tabs",
-  ungroupTabs: "tab-fridge/ungroup-tabs",
-  closeEmptyWindows: "tab-fridge/close-empty-windows"
+  getState: "panekeep/get-state",
+  refresh: "panekeep/refresh",
+  exportBackup: "panekeep/export-backup",
+  importBackup: "panekeep/import-backup",
+  createWorkspace: "panekeep/create-workspace",
+  updateWorkspace: "panekeep/update-workspace",
+  deleteWorkspace: "panekeep/delete-workspace",
+  mergeWorkspaces: "panekeep/merge-workspaces",
+  moveTabs: "panekeep/move-tabs",
+  ungroupTabs: "panekeep/ungroup-tabs",
+  closeEmptyWindows: "panekeep/close-empty-windows"
 } as const;
 
 export type BackgroundRequest =

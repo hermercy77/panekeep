@@ -24,4 +24,4 @@ We are committed to a respectful, harassment-free community for everyone, regard
 
 Maintainers may edit or remove contributions, comments, issues, or other participation that violates this policy. Serious or repeated violations may result in a temporary or permanent ban.
 
-Report conduct concerns privately through [GitHub's private vulnerability reporting](https://github.com/hermercy77/tab-fridge/security/advisories/new). Reports will be reviewed fairly and kept confidential as far as practical.
+Report conduct concerns privately through [GitHub's private vulnerability reporting](https://github.com/hermercy77/panekeep/security/advisories/new). Reports will be reviewed fairly and kept confidential as far as practical.

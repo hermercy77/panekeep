@@ -1,7 +1,17 @@
 {
-  "name": "tab-fridge",
+  "name": "panekeep",
   "private": true,
   "version": "0.1.0",
+  "description": "Local-first Chrome and Edge tab workspaces with optional user-initiated AI organization.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hermercy77/panekeep.git"
+  },
+  "homepage": "https://github.com/hermercy77/panekeep#readme",
+  "bugs": {
+    "url": "https://github.com/hermercy77/panekeep/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.12.0"

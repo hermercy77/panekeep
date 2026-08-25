@@ -102,11 +102,11 @@ async function main(): Promise<void> {
   const simulatedLatencyMs = Math.max(0, numberOption("--simulated-latency-ms", 0));
   const batchSize = Math.max(1, Math.floor(numberOption("--batch-size", 50)));
   const requestConcurrency = Math.max(1, Math.floor(numberOption("--request-concurrency", 3)));
-  const baseUrl = option("--base-url") ?? process.env.TAB_FRIDGE_AI_BASE_URL ?? "https://api.deepseek.com/v1";
-  const model = option("--model") ?? process.env.TAB_FRIDGE_AI_MODEL ?? "deepseek-v4-flash";
-  const apiKey = process.env.TAB_FRIDGE_AI_API_KEY ?? "";
+  const baseUrl = option("--base-url") ?? process.env.PANEKEEP_AI_BASE_URL ?? process.env.TAB_FRIDGE_AI_BASE_URL ?? "https://api.deepseek.com/v1";
+  const model = option("--model") ?? process.env.PANEKEEP_AI_MODEL ?? process.env.TAB_FRIDGE_AI_MODEL ?? "deepseek-v4-flash";
+  const apiKey = process.env.PANEKEEP_AI_API_KEY ?? process.env.TAB_FRIDGE_AI_API_KEY ?? "";
   if (live && !apiKey) {
-    throw new Error("TAB_FRIDGE_AI_API_KEY is required for --live; the key is never written to the report");
+    throw new Error("PANEKEEP_AI_API_KEY is required for --live; the key is never written to the report");
   }
   if (!sizes.length || !modes.length) throw new Error("At least one valid --sizes and --modes value is required");
 

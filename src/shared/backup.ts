@@ -1,5 +1,5 @@
 import { backupSchema, type Backup, type TabRecord, type WindowState, type Workspace } from "./contracts";
-import { BACKUP_SCHEMA_VERSION, TAB_FRIDGE_PRODUCT } from "./constants";
+import { BACKUP_SCHEMA_VERSION, PANEKEEP_PRODUCT } from "./constants";
 import { getAppLanguage, translate } from "../i18n";
 
 export interface StateSnapshot {
@@ -27,7 +27,7 @@ export function createBackup(
 ): Backup {
   return backupSchema.parse({
     schemaVersion: BACKUP_SCHEMA_VERSION,
-    product: TAB_FRIDGE_PRODUCT,
+    product: PANEKEEP_PRODUCT,
     browserFamily,
     exportedAt,
     windows: snapshot.windows,

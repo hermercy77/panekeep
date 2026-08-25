@@ -45,6 +45,8 @@ describe("backup and browser classification", () => {
 
     const parsed = parseBackup(stringifyBackup(backup));
     expect(parsed).toEqual(backup);
+    expect(backup.product).toBe("panekeep");
+    expect(parseBackup({ ...backup, product: "tab-fridge" }).product).toBe("tab-fridge");
     expect(stringifyBackup(backup)).not.toContain("apiKey");
     expect(stringifyBackup(backup)).not.toContain("password");
   });

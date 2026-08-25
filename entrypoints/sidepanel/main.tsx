@@ -5,7 +5,7 @@ import "../../src/ui/hallmark.css";
 import { initializeAppLanguage } from "../../src/i18n";
 
 const root = document.getElementById("root");
-if (!root) throw new Error("Tab Fridge sidepanel root is missing");
+if (!root) throw new Error("PaneKeep sidepanel root is missing");
 
 void initializeAppLanguage().then(() => {
   createRoot(root).render(

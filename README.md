@@ -1,4 +1,4 @@
-# Tab Fridge
+# PaneKeep
 
 Local-first browser workspaces for Chrome and Edge on macOS and Windows.
 
@@ -19,7 +19,7 @@ Load the generated `.output/chrome-mv3` or `.output/edge-mv3` directory as an un
 
 ## Localization
 
-Tab Fridge currently ships Simplified Chinese (`zh-CN`) and English (`en`). Every feature must add and test all supported languages in the same change; see [LOCALIZATION.md](./LOCALIZATION.md).
+PaneKeep currently ships Simplified Chinese (`zh-CN`) and English (`en`). Every feature must add and test all supported languages in the same change; see [LOCALIZATION.md](./LOCALIZATION.md).
 
 ## AI evaluation
 
@@ -32,4 +32,6 @@ Run `npm run eval:ai` for the browser-free deterministic suite, or use `npm run 
 - [Contributing](./CONTRIBUTING.md)
 - [Code of conduct](./CODE_OF_CONDUCT.md)
 
-An open-source license will be added before the first public release. Until then, publication of this repository does not grant permission to copy, modify, or redistribute the code.
+## License
+
+PaneKeep is licensed under the [Apache License 2.0](./LICENSE). See [NOTICE](./NOTICE) for attribution information.

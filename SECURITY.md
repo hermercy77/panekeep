@@ -8,7 +8,7 @@ Until the first stable release, security fixes are made on the latest `main` bra
 
 Do not report vulnerabilities, leaked credentials, or privacy issues in a public GitHub issue.
 
-Use [GitHub's private vulnerability reporting](https://github.com/hermercy77/tab-fridge/security/advisories/new). Include:
+Use [GitHub's private vulnerability reporting](https://github.com/hermercy77/panekeep/security/advisories/new). Include:
 
 - The affected version or commit;
 - Reproduction steps and required browser permissions;

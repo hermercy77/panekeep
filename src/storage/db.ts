@@ -2,8 +2,9 @@ import Dexie, { type Table } from "dexie";
 import type { TabRecord, WindowState, Workspace } from "../shared/contracts";
 import type { StateSnapshot } from "../shared/backup";
 
-export const TAB_FRIDGE_DATABASE_NAME = "tab-fridge";
-export const TAB_FRIDGE_DATABASE_VERSION = 1;
+/** Keep the pre-release database name stable so the brand migration preserves local data. */
+export const PANEKEEP_DATABASE_NAME = "tab-fridge";
+export const PANEKEEP_DATABASE_VERSION = 1;
 
 export interface StoredMeta {
   key: string;
@@ -11,15 +12,15 @@ export interface StoredMeta {
 }
 
 /** IndexedDB database for browser state. API keys are intentionally not stored here. */
-export class TabFridgeDatabase extends Dexie {
+export class PaneKeepDatabase extends Dexie {
   windows!: Table<WindowState, string>;
   workspaces!: Table<Workspace, string>;
   tabs!: Table<TabRecord, string>;
   meta!: Table<StoredMeta, string>;
 
-  constructor(name = TAB_FRIDGE_DATABASE_NAME) {
+  constructor(name = PANEKEEP_DATABASE_NAME) {
     super(name);
-    this.version(TAB_FRIDGE_DATABASE_VERSION).stores({
+    this.version(PANEKEEP_DATABASE_VERSION).stores({
       windows: "&key,nativeId,order",
       workspaces: "&id,windowKey,order,groupId",
       tabs: "&id,windowKey,workspaceId,kind,index,groupId,lastActivatedAt",
@@ -28,9 +29,9 @@ export class TabFridgeDatabase extends Dexie {
   }
 }
 
-export const db = new TabFridgeDatabase();
+export const db = new PaneKeepDatabase();
 
-export async function readSnapshot(database: TabFridgeDatabase = db): Promise<StateSnapshot> {
+export async function readSnapshot(database: PaneKeepDatabase = db): Promise<StateSnapshot> {
   const [windows, workspaces, tabs] = await Promise.all([
     database.windows.toArray(),
     database.workspaces.toArray(),
@@ -41,7 +42,7 @@ export async function readSnapshot(database: TabFridgeDatabase = db): Promise<St
 
 export async function replaceSnapshot(
   snapshot: StateSnapshot,
-  database: TabFridgeDatabase = db
+  database: PaneKeepDatabase = db
 ): Promise<void> {
   await database.transaction("rw", database.windows, database.workspaces, database.tabs, async () => {
     await Promise.all([database.windows.clear(), database.workspaces.clear(), database.tabs.clear()]);
@@ -50,4 +51,3 @@ export async function replaceSnapshot(
     if (snapshot.tabs.length > 0) await database.tabs.bulkPut(snapshot.tabs);
   });
 }
-

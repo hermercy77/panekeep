@@ -66,7 +66,7 @@
     "macrostructure": "Workbench",
     "theme": "C-light / B-dark",
     "enrichment": "none",
-    "brief": "Tab Fridge side panel and management app redesign",
+    "brief": "PaneKeep side panel and management app redesign",
     "axes": {
       "lightness": "adaptive",
       "displayStyle": "roman-sans",

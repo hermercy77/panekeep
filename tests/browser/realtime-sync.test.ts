@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerStateBroadcast } from "../../src/background/serviceWorker";
 import { createBrowserAdapter } from "../../src/ui-state/adapter";
-import type { TabFridgeSnapshot } from "../../src/ui-state/model";
+import type { PaneKeepSnapshot } from "../../src/ui-state/model";
 
-const firstSnapshot: TabFridgeSnapshot = {
+const firstSnapshot: PaneKeepSnapshot = {
   windows: [{ key: "window:1", nativeId: 1, name: "窗口 1", order: 0, isCurrent: true, expanded: true }],
   workspaces: [],
   tabs: []
 };
 
-const secondSnapshot: TabFridgeSnapshot = {
+const secondSnapshot: PaneKeepSnapshot = {
   ...firstSnapshot,
   tabs: [{
     id: "2",
@@ -29,11 +29,11 @@ afterEach(() => {
 
 describe("real-time browser state bridge", () => {
   it("broadcasts every engine snapshot without failing when no UI receives it", () => {
-    let stateListener: ((snapshot: TabFridgeSnapshot) => void) | undefined;
+    let stateListener: ((snapshot: PaneKeepSnapshot) => void) | undefined;
     const sendMessage = vi.fn(() => Promise.reject(new Error("no receiver")));
     const unsubscribe = vi.fn();
     const engine = {
-      subscribe(listener: (snapshot: TabFridgeSnapshot) => void) {
+      subscribe(listener: (snapshot: PaneKeepSnapshot) => void) {
         stateListener = listener;
         return unsubscribe;
       }
@@ -43,7 +43,7 @@ describe("real-time browser state bridge", () => {
     stateListener?.(secondSnapshot);
 
     expect(sendMessage).toHaveBeenCalledWith({
-      source: "tab-fridge-background",
+      source: "panekeep-background",
       action: "state.updated",
       snapshot: secondSnapshot
     });
@@ -67,14 +67,14 @@ describe("real-time browser state bridge", () => {
     });
 
     const adapter = createBrowserAdapter();
-    const snapshots: TabFridgeSnapshot[] = [];
+    const snapshots: PaneKeepSnapshot[] = [];
     const unsubscribe = adapter.subscribe?.((snapshot) => snapshots.push(snapshot));
 
     runtimeListener?.({ source: "unrelated", action: "state.updated", snapshot: secondSnapshot });
     expect(snapshots).toHaveLength(0);
 
     runtimeListener?.({
-      source: "tab-fridge-background",
+      source: "panekeep-background",
       action: "state.updated",
       snapshot: secondSnapshot
     });

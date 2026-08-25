@@ -23,7 +23,7 @@ describe("localization guardrail", () => {
   });
 
   it("rejects new hard-coded English JSX copy outside the catalog", () => {
-    const allowed = new Set(["Tab Fridge", "Base URL", "API Key"]);
+    const allowed = new Set(["PaneKeep", "Base URL", "API Key"]);
     const violations: string[] = [];
     for (const path of sourceFiles(join(ROOT, "ui")).filter((file) => file.endsWith(".tsx"))) {
       const source = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);

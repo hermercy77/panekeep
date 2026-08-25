@@ -10,7 +10,7 @@ export const DEFAULT_AI_CONFIG: AIConfig = {
   model: ""
 };
 
-/** The key is deliberately kept in storage.local, never storage.sync. */
+/** The legacy key is kept for seamless upgrades and stays in storage.local, never storage.sync. */
 export const AI_CONFIG_STORAGE_KEY = "tab-fridge.ai-config";
 
 export interface StorageAreaLike {

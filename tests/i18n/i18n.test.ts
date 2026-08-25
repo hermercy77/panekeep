@@ -15,7 +15,7 @@ afterEach(async () => {
   delete (globalThis as typeof globalThis & { chrome?: unknown }).chrome;
 });
 
-describe("Tab Fridge localization", () => {
+describe("PaneKeep localization", () => {
   it("keeps every locale complete and non-empty", () => {
     const chineseKeys = Object.keys(MESSAGES["zh-CN"]).sort();
     const englishKeys = Object.keys(MESSAGES.en).sort();

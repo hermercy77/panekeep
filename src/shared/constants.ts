@@ -4,7 +4,8 @@
  * browser state is represented in the local model.
  */
 
-export const TAB_FRIDGE_PRODUCT = "tab-fridge" as const;
+export const PANEKEEP_PRODUCT = "panekeep" as const;
+export const LEGACY_TAB_FRIDGE_PRODUCT = "tab-fridge" as const;
 export const BACKUP_SCHEMA_VERSION = 1 as const;
 export const STORAGE_DEBOUNCE_MS = 250;
 

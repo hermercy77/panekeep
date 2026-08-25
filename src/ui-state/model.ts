@@ -11,7 +11,7 @@ import type { BackupImportResult } from "../shared/backup";
 import type { MoveTabsResponse } from "../shared/messages";
 
 /** The small, read-only view model consumed by both UI entrypoints. */
-export interface TabFridgeSnapshot {
+export interface PaneKeepSnapshot {
   windows: WindowState[];
   tabs: TabRecord[];
   workspaces: Workspace[];
@@ -27,8 +27,8 @@ export interface WorkspaceDraft {
   groupId?: number;
 }
 
-export interface TabFridgeAdapter {
-  getSnapshot(): Promise<TabFridgeSnapshot>;
+export interface PaneKeepAdapter {
+  getSnapshot(): Promise<PaneKeepSnapshot>;
   createWorkspace(draft: WorkspaceDraft): Promise<Workspace>;
   updateWorkspace(id: string, draft: Partial<WorkspaceDraft>): Promise<Workspace>;
   deleteWorkspace(id: string, closeTabs?: boolean): Promise<void>;
@@ -42,16 +42,16 @@ export interface TabFridgeAdapter {
   applyOrganization(preview: OrganizationPreview): Promise<void>;
   exportBackup?: () => Promise<string>;
   importBackup?: (json: string) => Promise<BackupImportResult>;
-  subscribe?(listener: (snapshot: TabFridgeSnapshot) => void): () => void;
+  subscribe?(listener: (snapshot: PaneKeepSnapshot) => void): () => void;
 }
 
-export const emptySnapshot: TabFridgeSnapshot = {
+export const emptySnapshot: PaneKeepSnapshot = {
   windows: [],
   tabs: [],
   workspaces: []
 };
 
-export function cloneSnapshot(snapshot: TabFridgeSnapshot): TabFridgeSnapshot {
+export function cloneSnapshot(snapshot: PaneKeepSnapshot): PaneKeepSnapshot {
   return {
     windows: snapshot.windows.map((window) => ({ ...window })),
     tabs: snapshot.tabs.map((tab) => ({ ...tab })),
@@ -66,9 +66,9 @@ export function cloneSnapshot(snapshot: TabFridgeSnapshot): TabFridgeSnapshot {
  * Bridge responses are intentionally normalized here so UI components do not
  * depend on a storage or background implementation detail.
  */
-export function normalizeSnapshot(value: unknown): TabFridgeSnapshot | null {
+export function normalizeSnapshot(value: unknown): PaneKeepSnapshot | null {
   if (!value || typeof value !== "object") return null;
-  const candidate = value as Partial<TabFridgeSnapshot>;
+  const candidate = value as Partial<PaneKeepSnapshot>;
   if (!Array.isArray(candidate.windows) || !Array.isArray(candidate.tabs) || !Array.isArray(candidate.workspaces)) {
     return null;
   }

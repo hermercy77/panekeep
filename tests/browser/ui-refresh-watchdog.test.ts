@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBrowserAdapter } from "../../src/ui-state/adapter";
-import type { TabFridgeSnapshot } from "../../src/ui-state/model";
+import type { PaneKeepSnapshot } from "../../src/ui-state/model";
 
-const snapshot: TabFridgeSnapshot = {
+const snapshot: PaneKeepSnapshot = {
   windows: [{ key: "window:1", nativeId: 1, name: "窗口 1", order: 0, isCurrent: true, expanded: true }],
   workspaces: [],
   tabs: []
@@ -42,7 +42,7 @@ describe("UI refresh watchdog", () => {
     const harness = setup();
     harness.tabListener();
     await vi.advanceTimersByTimeAsync(400);
-    expect(harness.sendMessage).toHaveBeenCalledWith({ source: "tab-fridge-ui", action: "refresh", payload: undefined });
+    expect(harness.sendMessage).toHaveBeenCalledWith({ source: "panekeep-ui", action: "refresh", payload: undefined });
     harness.unsubscribe?.();
   });
 
@@ -50,7 +50,7 @@ describe("UI refresh watchdog", () => {
     vi.useFakeTimers();
     const harness = setup();
     harness.tabListener();
-    harness.runtimeListener({ source: "tab-fridge-background", action: "state.updated", snapshot });
+    harness.runtimeListener({ source: "panekeep-background", action: "state.updated", snapshot });
     await vi.advanceTimersByTimeAsync(400);
     expect(harness.sendMessage).not.toHaveBeenCalled();
     harness.unsubscribe?.();
