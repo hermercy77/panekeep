@@ -8,6 +8,7 @@ import { workspaceColorClass } from "./workspaceColors";
 
 interface OrganizationDialogProps {
   open: boolean;
+  destination?: string;
   tabs: TabRecord[];
   mode: OrganizationMode;
   preview: OrganizationPreview | null;
@@ -22,6 +23,7 @@ interface OrganizationDialogProps {
 
 export function OrganizationDialog({
   open,
+  destination,
   tabs,
   mode,
   preview,
@@ -133,6 +135,9 @@ export function OrganizationDialog({
               </div>
               {selectedFixedCount ? <p className="selection-note">{t("organize.fixedWarning", { count: selectedFixedCount })}</p> : null}
             </div>
+            <p className="organization-disclosure" role="note">
+              {t("organize.dataDisclosure", { destination: destination || t("organize.configuredProvider") })}
+            </p>
             {error ? <div className="inline-error">{error}</div> : null}
             <div className="dialog-actions organization-primary-actions" aria-live="polite">
               <button className="button button-primary" type="button" disabled={!selectedTabIds.size || loading || applying} onClick={() => void onGenerate(mode, [...selectedTabIds])} aria-busy={loading}>

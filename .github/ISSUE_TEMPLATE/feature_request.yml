@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose an improvement that fits the project's single purpose
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What tab-workspace problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Permission, privacy, and localization impact
+      description: Note any new browser permissions, stored or transmitted data, and user-facing copy.
+    validations:
+      required: true

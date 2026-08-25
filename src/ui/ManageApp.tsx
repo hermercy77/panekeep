@@ -226,6 +226,7 @@ export function ManageApp() {
           <section className="manage-section split-section" id="ai-settings">
             <div className="section-title-row"><div><h2>{t("manage.aiSettings")}</h2><p>{t("manage.aiDescription")}</p></div></div>
             <div className="settings-card">
+              <p className="settings-disclosure">{t("manage.aiDataDisclosure")}</p>
               <label className="field-label" htmlFor="ai-provider">{t("manage.provider")}</label>
               <select id="ai-provider" className="text-input provider-select" disabled={testingAI} value={getAIProviderPreset(aiConfig.providerId) ? aiConfig.providerId : "custom"} onChange={(event) => changeProvider(event.target.value)}>
                 <optgroup label={t("manage.providerGlobal")}>

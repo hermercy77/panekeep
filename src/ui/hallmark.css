@@ -443,6 +443,8 @@ svg { display: block; flex: 0 0 auto; }
 .selection-item-meta { padding: var(--space-3xs) var(--space-2xs); border: var(--rule-thin) solid var(--color-rule); border-radius: var(--radius-xs); color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-2xs); line-height: 1; }
 .selection-empty { margin: 0; padding: var(--space-lg) var(--space-sm); color: var(--color-muted); font-size: var(--text-xs); text-align: center; }
 .selection-note { margin: 0; padding: var(--space-xs) var(--space-sm); border-block-start: var(--rule-thin) solid var(--color-rule); color: var(--color-neutral); background: var(--color-paper-2); font-size: var(--text-xs); }
+.organization-disclosure, .settings-disclosure { margin: var(--space-sm) 0 0; padding: var(--space-xs) var(--space-sm); border-inline-start: .1875rem solid var(--color-accent); color: var(--color-neutral); background: var(--color-paper-2); font-size: var(--text-xs); line-height: 1.5; }
+.settings-disclosure { margin-block: 0 var(--space-sm); }
 .organization-primary-actions { margin-block-start: var(--space-sm); }
 .organization-primary-actions .button { min-width: 8rem; }
 .preview-panel { margin-block-start: var(--space-md); }

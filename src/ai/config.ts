@@ -35,6 +35,20 @@ function stripTrailingSlashes(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
+/** Public AI endpoints must use TLS. Plain HTTP is limited to this device. */
+export function isAllowedAIBaseUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || (url.protocol === "http:" && isLoopbackHost(url.hostname));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Normalize and validate user-supplied settings at the storage boundary.
  * The API key is not logged or otherwise transformed beyond whitespace trim.
@@ -54,6 +68,10 @@ export function normalizeAIConfig(config: Partial<AIConfig> = {}): AIConfig {
       model: String(candidate.model ?? "").trim()
     });
 
+    if (!isAllowedAIBaseUrl(parsed.baseUrl)) {
+      throw new AIConfigError(translate(getAppLanguage(), "ai.secureUrlRequired"));
+    }
+
     return {
       providerId: parsed.providerId,
       baseUrl: stripTrailingSlashes(parsed.baseUrl),
@@ -61,6 +79,7 @@ export function normalizeAIConfig(config: Partial<AIConfig> = {}): AIConfig {
       model: parsed.model
     };
   } catch (error) {
+    if (error instanceof AIConfigError) throw error;
     throw new AIConfigError(translate(getAppLanguage(), "ai.invalidConfig"), error);
   }
 }

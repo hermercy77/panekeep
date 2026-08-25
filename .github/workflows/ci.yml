@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Verify localization
+        run: npm run test:i18n
+
+      - name: Run tests
+        run: npm test -- --run
+
+      - name: Build Chrome extension
+        run: npm run build
+
+      - name: Build Edge extension
+        run: npm run build:edge
+
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high

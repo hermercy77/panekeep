@@ -8,6 +8,8 @@ import { WorkspaceDialog } from "./WorkspaceDialog";
 import { useI18n } from "../i18n/react";
 import { WorkspaceMergeDialog } from "./WorkspaceMergeDialog";
 import { DeleteWorkspaceDialog } from "./DeleteWorkspaceDialog";
+import { createAIConfigStore } from "../ai/config";
+import { getAIProviderPreset } from "../ai/providers";
 
 function manageUrl(): string {
   try {
@@ -47,6 +49,7 @@ export function SidePanelApp() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiApplying, setAiApplying] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiDestination, setAiDestination] = useState("");
 
   useEffect(() => {
     const keys = snapshot.windows.length ? snapshot.windows.map((window) => window.key) : [...new Set(snapshot.tabs.map((tab) => tab.windowKey))];
@@ -125,6 +128,13 @@ export function SidePanelApp() {
     setAiOpen(true);
     setAiPreview(null);
     setAiError(null);
+    void createAIConfigStore().load().then((config) => {
+      const preset = getAIProviderPreset(config.providerId);
+      let origin = config.baseUrl;
+      try { origin = new URL(config.baseUrl).origin; } catch { /* keep configured value */ }
+      const provider = preset ? t(preset.nameKey) : t("manage.providerCustom");
+      setAiDestination(origin ? `${provider} (${origin})` : provider);
+    }).catch(() => setAiDestination(t("organize.configuredProvider")));
   };
 
   const generatePreview = async (mode: OrganizationMode, tabIds: string[]) => {
@@ -291,6 +301,7 @@ export function SidePanelApp() {
       />
       <OrganizationDialog
         open={aiOpen}
+        destination={aiDestination}
         tabs={snapshot.tabs}
         mode={aiMode}
         preview={aiPreview}

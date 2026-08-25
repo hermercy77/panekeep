@@ -9,13 +9,15 @@ export default defineConfig({
     version: "0.1.0",
     permissions: [
       "tabs",
-      "windows",
       "tabGroups",
       "storage",
-      "sessions",
       "sidePanel"
     ],
-    optional_host_permissions: ["http://*/*", "https://*/*"],
+    optional_host_permissions: [
+      "https://*/*",
+      "http://localhost/*",
+      "http://127.0.0.1/*"
+    ],
     action: {
       default_title: "__MSG_actionTitle__"
     },

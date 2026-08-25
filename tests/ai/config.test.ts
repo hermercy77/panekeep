@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AI_CONFIG_STORAGE_KEY, LocalAIConfigStore } from "../../src/ai";
+import { AI_CONFIG_STORAGE_KEY, LocalAIConfigStore, isAllowedAIBaseUrl } from "../../src/ai";
 
 describe("local AI config storage", () => {
   it("stores and loads API configuration through the injected local area", async () => {
@@ -52,5 +52,16 @@ describe("local AI config storage", () => {
     const store = new LocalAIConfigStore(storage);
     await store.save({ baseUrl: "https://api.deepseek.com", apiKey: "secret", model: "deepseek-v4-flash" });
     await expect(store.load()).resolves.toMatchObject({ model: "deepseek-v4-flash", apiKey: "secret" });
+  });
+
+  it("requires HTTPS except for loopback AI servers", async () => {
+    expect(isAllowedAIBaseUrl("https://provider.test/v1")).toBe(true);
+    expect(isAllowedAIBaseUrl("http://localhost:11434/v1")).toBe(true);
+    expect(isAllowedAIBaseUrl("http://127.0.0.1:8080/v1")).toBe(true);
+    expect(isAllowedAIBaseUrl("http://provider.test/v1")).toBe(false);
+    expect(isAllowedAIBaseUrl("http://192.168.1.20:11434/v1")).toBe(false);
+
+    const store = new LocalAIConfigStore({ get: async () => ({}), set: async () => undefined });
+    await expect(store.save({ baseUrl: "http://provider.test/v1" })).rejects.toThrow("HTTPS");
   });
 });
