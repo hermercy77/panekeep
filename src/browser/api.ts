@@ -51,9 +51,19 @@ export async function invokeBrowser<T>(
       settled = true;
       reject(error);
     };
+    const callback = (value: T): void => {
+      const lastError = (globalThis as typeof globalThis & {
+        chrome?: { runtime?: { lastError?: { message?: string } } };
+      }).chrome?.runtime?.lastError;
+      if (lastError) {
+        fail(new Error(lastError.message || "Browser API call failed"));
+        return;
+      }
+      finish(value);
+    };
 
     try {
-      const result = method.call(owner, ...args, finish);
+      const result = method.call(owner, ...args, callback);
       if (result && typeof result.then === "function") {
         result.then(finish, (error: unknown) => {
           // Some implementations reject when a callback is supplied. Retry

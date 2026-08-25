@@ -124,6 +124,52 @@ def create_native_workspace(page: Page) -> dict:
     )
 
 
+def verify_native_group_reorder(page: Page, source_workspace_id: str) -> dict:
+    return page.evaluate(
+        r"""async (sourceWorkspaceId) => {
+          const tabs = (await chrome.tabs.query({})).filter((tab) => /^https:\/\//.test(tab.url || ""));
+          const stateBefore = (await chrome.runtime.sendMessage({ source: "panekeep-ui", action: "snapshot" }))?.snapshot;
+          const assigned = new Set(stateBefore.tabs.filter((tab) => tab.workspaceId).map((tab) => tab.id));
+          const unclassified = tabs.filter((tab) => !assigned.has(String(tab.id))).sort((left, right) => left.index - right.index);
+          if (unclassified.length < 3) throw new Error(`Expected three unclassified fixture tabs, found ${unclassified.length}`);
+          const targetCreate = await chrome.runtime.sendMessage({
+            type: "panekeep/create-workspace",
+            windowId: unclassified[0].windowId,
+            name: "BETA",
+            color: "green",
+            icon: "folder",
+            tabIds: [String(unclassified[1].id), String(unclassified[2].id)]
+          });
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          const stateAfterCreate = (await chrome.runtime.sendMessage({ source: "panekeep-ui", action: "snapshot" }))?.snapshot;
+          const target = stateAfterCreate?.workspaces.find((workspace) =>
+            workspace.groupId === targetCreate.groupId || workspace.name === "BETA"
+          );
+          if (!target) throw new Error("Target native workspace was not present after creation");
+          const reorder = await chrome.runtime.sendMessage({
+            source: "panekeep-ui",
+            action: "workspace.move",
+            payload: { workspaceId: sourceWorkspaceId, beforeWorkspaceId: target.id }
+          });
+          if (!reorder || reorder.ok === false) throw new Error(reorder?.error || "workspace.move returned no response");
+          const source = reorder.snapshot.workspaces.find((workspace) => workspace.id === sourceWorkspaceId);
+          const refreshedTarget = reorder.snapshot.workspaces.find((workspace) => workspace.id === target.id);
+          const sourceTabs = await chrome.tabs.query({ groupId: source.groupId });
+          const targetTabs = await chrome.tabs.query({ groupId: refreshedTarget.groupId });
+          const sourceStart = Math.min(...sourceTabs.map((tab) => tab.index));
+          const targetStart = Math.min(...targetTabs.map((tab) => tab.index));
+          return {
+            sourceGroupId: source.groupId,
+            targetGroupId: refreshedTarget.groupId,
+            sourceStart,
+            targetStart,
+            orderedBeforeTarget: sourceStart < targetStart
+          };
+        }""",
+        source_workspace_id,
+    )
+
+
 def main() -> None:
     args = parse_args()
     extension = args.extension.resolve()
@@ -149,8 +195,14 @@ def main() -> None:
 
                 first = context.new_page()
                 second = context.new_page()
+                third = context.new_page()
+                fourth = context.new_page()
+                fifth = context.new_page()
                 goto_fixture(first, "https://example.com/?panekeep=research")
                 goto_fixture(second, "https://example.org/?panekeep=release")
+                goto_fixture(third, "https://example.net/?panekeep=ungrouped")
+                goto_fixture(fourth, "https://www.iana.org/domains/reserved?panekeep=beta-one")
+                goto_fixture(fifth, "https://developer.chrome.com/docs/extensions/?panekeep=beta-two")
 
                 manage = context.new_page()
                 attach_diagnostics(manage, diagnostics)
@@ -163,6 +215,9 @@ def main() -> None:
                 assert native["backupProduct"] == "panekeep", native
                 assert native["backupContainsApiKey"] is False, native
                 evidence["nativeWorkspace"] = native
+                reorder = verify_native_group_reorder(manage, native["workspace"]["id"])
+                assert reorder["orderedBeforeTarget"] is True, reorder
+                evidence["nativeGroupReorder"] = reorder
 
                 manage.reload(wait_until="networkidle")
                 manage.get_by_text("发布准备", exact=True).wait_for()

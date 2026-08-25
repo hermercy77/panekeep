@@ -1,28 +1,35 @@
 {
-  "testedAt": "2026-08-25T10:53:34.335629+00:00",
+  "testedAt": "2026-08-25T11:02:21.990190+00:00",
   "extensionPath": ".output/chrome-mv3",
   "isolatedProfile": true,
   "extensionId": "kbnekfljifgbidpkfflejnnjoepljbbo",
   "browserVersion": "145.0.7632.6",
   "nativeWorkspace": {
     "workspace": {
-      "id": "workspace:236040274:891489264",
+      "id": "workspace:15434862:864003021",
       "name": "发布准备",
-      "groupId": 891489264
+      "groupId": 864003021
     },
     "nativeGroup": {
-      "id": 891489264,
+      "id": 864003021,
       "title": "发布准备",
       "color": "blue"
     },
     "groupedTabCount": 2,
     "snapshotGroupedTabCount": 2,
     "movedTabIds": [
-      "236040277"
+      "15434865"
     ],
     "skippedTabIds": [],
     "backupProduct": "panekeep",
     "backupContainsApiKey": false
+  },
+  "nativeGroupReorder": {
+    "sourceGroupId": 864003021,
+    "targetGroupId": 1498161194,
+    "sourceStart": 3,
+    "targetStart": 5,
+    "orderedBeforeTarget": true
   },
   "uiSmoke": {
     "manageZhCN": true,

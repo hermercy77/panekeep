@@ -405,6 +405,7 @@ export class BrowserStateEngine {
   async moveWorkspace(workspaceId: string, beforeWorkspaceId?: string): Promise<void> {
     const source = this.state.workspaces.find((workspace) => workspace.id === workspaceId);
     if (!source) return;
+    if (beforeWorkspaceId === source.id) return;
     const requestedBefore = beforeWorkspaceId
       ? this.state.workspaces.find((workspace) => workspace.id === beforeWorkspaceId && workspace.windowKey === source.windowKey)
       : undefined;
@@ -415,24 +416,38 @@ export class BrowserStateEngine {
       ? siblings.findIndex((workspace) => workspace.id === requestedBefore.id)
       : siblings.length;
     const insertAt = beforeIndex < 0 ? siblings.length : beforeIndex;
+    if (this.api && source.groupId !== undefined && this.api.tabGroups?.move && (!requestedBefore || requestedBefore.groupId !== undefined)) {
+      const sourceIndices = this.state.tabs
+        .filter((tab) => tab.groupId === source.groupId && tab.kind === "normal")
+        .map((tab) => tab.index)
+        .sort((left, right) => left - right);
+      const targetIndex = requestedBefore
+        ? this.state.tabs
+          .filter((tab) => tab.groupId === requestedBefore.groupId && tab.kind === "normal")
+          .reduce<number | undefined>((lowest, tab) => lowest === undefined ? tab.index : Math.min(lowest, tab.index), undefined)
+        : undefined;
+      const adjustedIndex = targetIndex !== undefined && sourceIndices.length && sourceIndices[0] < targetIndex
+        ? Math.max(0, targetIndex - sourceIndices.length)
+        : targetIndex;
+      try {
+        await invokeBrowser(this.api.tabGroups, "move", source.groupId, {
+          index: adjustedIndex ?? -1
+        });
+        await this.syncFromBrowser();
+        return;
+      } catch {
+        // Native order is authoritative. Reconcile instead of leaving an
+        // optimistic local order that the browser rejected.
+        await this.syncFromBrowser();
+        return;
+      }
+    }
+
     siblings.splice(insertAt, 0, source);
     siblings.forEach((workspace, index) => {
       workspace.order = index;
       workspace.updatedAt = this.now();
     });
-
-    if (this.api && source.groupId !== undefined && this.api.tabGroups?.move) {
-      const beforeTab = requestedBefore
-        ? this.state.tabs.find((tab) => tab.workspaceId === requestedBefore.id && tab.kind === "normal")
-        : undefined;
-      try {
-        await invokeBrowser(this.api.tabGroups, "move", source.groupId, {
-          index: beforeTab?.index ?? -1
-        });
-      } catch {
-        // Local ordering remains valid on browsers without tab-group moving.
-      }
-    }
     this.markChanged();
   }
 

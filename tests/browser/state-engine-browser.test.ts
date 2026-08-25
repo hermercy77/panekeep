@@ -38,6 +38,7 @@ class FakeBrowser {
   readonly removedWindowIds: number[] = [];
   readonly tabUpdates: Array<{ tabId: number; changes: Record<string, unknown> }> = [];
   readonly groupUpdates: Array<{ groupId: number; changes: Record<string, unknown> }> = [];
+  readonly groupMoves: Array<{ groupId: number; index: number }> = [];
   readonly discardedTabIds: number[] = [];
   readonly failCreateUrls = new Set<string>();
   readonly api: BrowserLike;
@@ -185,7 +186,10 @@ class FakeBrowser {
           this.groupUpdates.push({ groupId, changes: { ...changes } });
           return { ...group };
         },
-        move: async () => undefined,
+        move: async (groupId: number, { index }: { index: number }) => {
+          this.groupMoves.push({ groupId, index });
+          return this.groups.find((group) => group.id === groupId);
+        },
         onCreated: event(),
         onRemoved: event(),
         onUpdated: event(),
@@ -209,6 +213,34 @@ function tab(id: number, windowId: number, options: Partial<NativeTab> = {}): Na
 }
 
 describe("BrowserStateEngine with Chromium state", () => {
+  it("adjusts a native group target index after removing an earlier source group", async () => {
+    const fake = new FakeBrowser([{
+      id: 1,
+      type: "normal",
+      focused: true,
+      tabs: [
+        tab(101, 1, { groupId: 10, active: true, index: 0 }),
+        tab(102, 1, { groupId: 10, index: 1 }),
+        tab(103, 1, { groupId: -1, index: 2 }),
+        tab(104, 1, { groupId: 20, index: 3 }),
+        tab(105, 1, { groupId: 20, index: 4 }),
+        tab(106, 1, { groupId: 20, index: 5 })
+      ]
+    }], [
+      { id: 10, windowId: 1, title: "Source", color: "blue" },
+      { id: 20, windowId: 1, title: "Target", color: "green" }
+    ]);
+    const engine = new BrowserStateEngine({ api: fake.api, repository: new MemoryStateRepository(), debounceMs: 0 });
+    await engine.start();
+    const source = engine.getState().workspaces.find((workspace) => workspace.groupId === 10)!;
+    const target = engine.getState().workspaces.find((workspace) => workspace.groupId === 20)!;
+
+    await engine.moveWorkspace(source.id, target.id);
+
+    expect(fake.groupMoves).toEqual([{ groupId: 10, index: 1 }]);
+    await engine.stop();
+  });
+
   it("coalesces concurrent browser syncs and waits for the final reconciliation", async () => {
     const fake = new FakeBrowser([{
       id: 1,
