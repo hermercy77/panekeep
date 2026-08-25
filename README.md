@@ -1,5 +1,7 @@
 # PaneKeep
 
+[简体中文](./README.zh-CN.md) | English
+
 Local-first browser workspaces for Chrome and Edge on macOS and Windows.
 
 > The project is preparing its first public release. Install unpacked builds only in a test browser profile until the release checklist and native-browser acceptance are complete.
