@@ -189,6 +189,9 @@ export class OpenAICompatibleClient implements AIClient {
   private supportsGPT55ReasoningEffort: boolean | undefined;
   private supportsThinkingControl: boolean | undefined;
   private supportsEnableThinkingControl: boolean | undefined;
+  private supportsResponseFormat: boolean | undefined;
+  private supportsDefaultTemperature: boolean | undefined;
+  private outputTokenField: "max_tokens" | "max_completion_tokens" | "unsupported" = "max_tokens";
 
   constructor(config: AIConfig, options: OpenAICompatibleClientOptions = {}) {
     this.config = assertUsableConfig(config);
@@ -210,11 +213,12 @@ export class OpenAICompatibleClient implements AIClient {
       && this.supportsEnableThinkingControl !== false
       ? false
       : undefined;
-    const temperature = options.temperature ?? (this.config.providerId === "anthropic"
+    const inferredTemperature = this.config.providerId === "anthropic"
       ? undefined
       : this.config.providerId === "zhipu"
         ? 0.01
-        : 0);
+        : 0;
+    const temperature = options.temperature ?? (this.supportsDefaultTemperature === false ? undefined : inferredTemperature);
     // Tab organization is a latency-sensitive classification task. GPT-5.5
     // defaults to medium reasoning, so opt out unless the caller explicitly
     // requests a different effort.
@@ -238,8 +242,10 @@ export class OpenAICompatibleClient implements AIClient {
           model: this.config.model,
           messages,
           ...(temperature === undefined ? {} : { temperature }),
-          ...(options.responseFormat === "text" ? {} : { response_format: { type: "json_object" } }),
-          ...(options.maxTokens === undefined ? {} : { max_tokens: Math.max(1, Math.floor(options.maxTokens)) }),
+          ...(options.responseFormat === "text" || this.supportsResponseFormat === false ? {} : { response_format: { type: "json_object" } }),
+          ...(options.maxTokens === undefined || this.outputTokenField === "unsupported"
+            ? {}
+            : { [this.outputTokenField]: Math.max(1, Math.floor(options.maxTokens)) }),
           ...(thinking === undefined ? {} : { thinking: { type: thinking } }),
           ...(inferredEnableThinking === undefined ? {} : { enable_thinking: inferredEnableThinking }),
           ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort })
@@ -258,39 +264,71 @@ export class OpenAICompatibleClient implements AIClient {
       body: JSON.stringify(requestBody)
     }, { ...this.retry, ...options });
     let response;
-    try {
-      response = await send(body);
-      if (inferredReasoningEffort !== undefined) this.supportsGPT55ReasoningEffort = true;
-      if (inferredThinking !== undefined) this.supportsThinkingControl = true;
-      if (inferredEnableThinking !== undefined) this.supportsEnableThinkingControl = true;
-    } catch (error) {
-      const rejectedInferredEffort = inferredReasoningEffort !== undefined
-        && options.reasoningEffort === undefined
-        && error instanceof AIHttpError
-        && (error.status === 400 || error.status === 422)
-        && /reasoning(?:[_. ]?effort)?/i.test(error.message);
-      const rejectedInferredThinking = inferredThinking !== undefined
-        && options.thinking === undefined
-        && error instanceof AIHttpError
-        && (error.status === 400 || error.status === 422)
-        && /thinking/i.test(error.message);
-      const rejectedEnableThinking = inferredEnableThinking !== undefined
-        && error instanceof AIHttpError
-        && (error.status === 400 || error.status === 422)
-        && /enable[_ .]?thinking/i.test(error.message);
-      if (rejectedInferredEffort) {
-        this.supportsGPT55ReasoningEffort = false;
-        const { reasoning_effort: _unsupported, ...fallbackBody } = body;
-        response = await send(fallbackBody);
-      } else if (rejectedInferredThinking) {
-        this.supportsThinkingControl = false;
-        const { thinking: _unsupported, ...fallbackBody } = body;
-        response = await send(fallbackBody);
-      } else if (rejectedEnableThinking) {
-        this.supportsEnableThinkingControl = false;
-        const { enable_thinking: _unsupported, ...fallbackBody } = body;
-        response = await send(fallbackBody);
-      } else {
+    let requestBody = body;
+    for (let compatibilityAttempt = 0; ; compatibilityAttempt += 1) {
+      try {
+        response = await send(requestBody);
+        if ("reasoning_effort" in requestBody && inferredReasoningEffort !== undefined) this.supportsGPT55ReasoningEffort = true;
+        if ("thinking" in requestBody && inferredThinking !== undefined) this.supportsThinkingControl = true;
+        if ("enable_thinking" in requestBody && inferredEnableThinking !== undefined) this.supportsEnableThinkingControl = true;
+        if ("response_format" in requestBody) this.supportsResponseFormat = true;
+        if ("temperature" in requestBody && options.temperature === undefined) this.supportsDefaultTemperature = true;
+        break;
+      } catch (error) {
+        const optionalParameterError = error instanceof AIHttpError
+          && (error.status === 400 || error.status === 422);
+        if (!optionalParameterError || compatibilityAttempt >= 5) throw error;
+
+        if ("reasoning_effort" in requestBody
+          && inferredReasoningEffort !== undefined
+          && options.reasoningEffort === undefined
+          && /reasoning(?:[_. ]?effort)?/i.test(error.message)) {
+          this.supportsGPT55ReasoningEffort = false;
+          const { reasoning_effort: _unsupported, ...fallbackBody } = requestBody;
+          requestBody = fallbackBody;
+          continue;
+        }
+        if ("thinking" in requestBody
+          && inferredThinking !== undefined
+          && options.thinking === undefined
+          && /thinking/i.test(error.message)) {
+          this.supportsThinkingControl = false;
+          const { thinking: _unsupported, ...fallbackBody } = requestBody;
+          requestBody = fallbackBody;
+          continue;
+        }
+        if ("enable_thinking" in requestBody
+          && inferredEnableThinking !== undefined
+          && /enable[_ .]?thinking/i.test(error.message)) {
+          this.supportsEnableThinkingControl = false;
+          const { enable_thinking: _unsupported, ...fallbackBody } = requestBody;
+          requestBody = fallbackBody;
+          continue;
+        }
+        if ("response_format" in requestBody && /response[_ .-]?format|json[_ -]?object|json mode/i.test(error.message)) {
+          this.supportsResponseFormat = false;
+          const { response_format: _unsupported, ...fallbackBody } = requestBody;
+          requestBody = fallbackBody;
+          continue;
+        }
+        if ("temperature" in requestBody && options.temperature === undefined && /temperature/i.test(error.message)) {
+          this.supportsDefaultTemperature = false;
+          const { temperature: _unsupported, ...fallbackBody } = requestBody;
+          requestBody = fallbackBody;
+          continue;
+        }
+        if ("max_tokens" in requestBody && /max[_ .-]?tokens|max(?:imum)? tokens|completion tokens/i.test(error.message)) {
+          const { max_tokens, ...fallbackBody } = requestBody;
+          this.outputTokenField = "max_completion_tokens";
+          requestBody = { ...fallbackBody, max_completion_tokens: max_tokens };
+          continue;
+        }
+        if ("max_completion_tokens" in requestBody && /max[_ .-]?completion[_ .-]?tokens|max(?:imum)? completion tokens/i.test(error.message)) {
+          const { max_completion_tokens: _unsupported, ...fallbackBody } = requestBody;
+          this.outputTokenField = "unsupported";
+          requestBody = fallbackBody;
+          continue;
+        }
         throw error;
       }
     }

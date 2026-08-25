@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AIHttpError, AITimeoutError, OpenAICompatibleClient } from "../../src/ai";
+import { AI_PROVIDER_PRESETS } from "../../src/ai/providers";
 
 function response(status: number, body: unknown) {
   return {
@@ -13,6 +14,55 @@ function response(status: number, body: unknown) {
 const config = { baseUrl: "https://provider.test/v1", apiKey: "sk-test-secret", model: "test-model" };
 
 describe("OpenAI-compatible client", () => {
+  it("uses the configured model-list endpoint and authentication for every preset", async () => {
+    for (const provider of AI_PROVIDER_PRESETS) {
+      let requestUrl = "";
+      let requestHeaders: Record<string, string> | undefined;
+      const client = new OpenAICompatibleClient({
+        providerId: provider.id,
+        baseUrl: provider.baseUrl,
+        apiKey: "provider-test-key",
+        model: ""
+      }, {
+        fetch: async (url, init) => {
+          requestUrl = url;
+          requestHeaders = init?.headers;
+          return response(200, { data: [] });
+        }
+      });
+
+      await client.testConnection();
+
+      expect(requestUrl).toBe(`${provider.baseUrl}/models`);
+      if (provider.id === "anthropic") {
+        expect(requestHeaders).toMatchObject({ "x-api-key": "provider-test-key", "anthropic-version": "2023-06-01" });
+        expect(requestHeaders).not.toHaveProperty("Authorization");
+      } else expect(requestHeaders?.Authorization).toBe("Bearer provider-test-key");
+    }
+  });
+
+  it("uses the correct completion protocol path for every preset", async () => {
+    for (const provider of AI_PROVIDER_PRESETS) {
+      let requestUrl = "";
+      const client = new OpenAICompatibleClient({
+        providerId: provider.id,
+        baseUrl: provider.baseUrl,
+        apiKey: "provider-test-key",
+        model: "provider-test-model"
+      }, {
+        fetch: async (url) => {
+          requestUrl = url;
+          return provider.id === "anthropic"
+            ? response(200, { content: [{ type: "text", text: '{"ok":true}' }] })
+            : response(200, { choices: [{ message: { content: '{"ok":true}' } }] });
+        }
+      });
+
+      await client.completeJSON([{ role: "user", content: "classify" }]);
+      expect(requestUrl).toBe(`${provider.baseUrl}/${provider.id === "anthropic" ? "messages" : "chat/completions"}`);
+    }
+  });
+
   it("tests the connection and sends an authorization header", async () => {
     const calls: { url: string; init?: { headers?: Record<string, string> } }[] = [];
     const client = new OpenAICompatibleClient(config, {
@@ -163,6 +213,42 @@ describe("OpenAI-compatible client", () => {
     await expect(client.completeJSON([{ role: "user", content: "classify" }])).resolves.toEqual({ ok: true });
     expect(requestBodies[0]).toHaveProperty("enable_thinking", false);
     expect(requestBodies[1]).not.toHaveProperty("enable_thinking");
+  });
+
+  it("removes unsupported optional OpenAI fields with a bounded compatibility fallback", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const errors = [
+      "Unsupported parameter: response_format",
+      "temperature is not supported",
+      "Use max_completion_tokens instead of max_tokens",
+      "max_completion_tokens is not supported"
+    ];
+    const client = new OpenAICompatibleClient(config, {
+      fetch: async (_url, init) => {
+        const requestBody = JSON.parse(init?.body ?? "{}") as Record<string, unknown>;
+        requestBodies.push(requestBody);
+        const message = errors[requestBodies.length - 1];
+        return message
+          ? response(400, { error: { message } })
+          : response(200, { choices: [{ message: { content: '{"ok":true}' } }] });
+      }
+    });
+
+    await expect(client.completeJSON([{ role: "user", content: "classify" }], undefined, { maxTokens: 900 }))
+      .resolves.toEqual({ ok: true });
+    expect(requestBodies).toHaveLength(5);
+    expect(requestBodies[0]).toMatchObject({ response_format: { type: "json_object" }, temperature: 0, max_tokens: 900 });
+    expect(requestBodies[1]).not.toHaveProperty("response_format");
+    expect(requestBodies[2]).not.toHaveProperty("temperature");
+    expect(requestBodies[3]).toHaveProperty("max_completion_tokens", 900);
+    expect(requestBodies[4]).not.toHaveProperty("max_tokens");
+    expect(requestBodies[4]).not.toHaveProperty("max_completion_tokens");
+
+    await client.completeJSON([{ role: "user", content: "classify again" }], undefined, { maxTokens: 900 });
+    expect(requestBodies.at(-1)).not.toHaveProperty("response_format");
+    expect(requestBodies.at(-1)).not.toHaveProperty("temperature");
+    expect(requestBodies.at(-1)).not.toHaveProperty("max_tokens");
+    expect(requestBodies.at(-1)).not.toHaveProperty("max_completion_tokens");
   });
 
   it("tests a connection before a model is selected and accepts common model-list shapes", async () => {
