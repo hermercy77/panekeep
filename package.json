@@ -45,15 +45,15 @@
     "zod": "^4.0.5"
   },
   "devDependencies": {
-    "@types/chrome": "^0.0.270",
+    "@types/chrome": "^0.2.7",
     "@types/react": "^19.1.9",
     "@types/react-dom": "^19.1.7",
-    "@vitejs/plugin-react": "^4.7.0",
-    "jsdom": "^26.1.0",
-    "typescript": "^5.9.2",
-    "vite": "^7.1.3",
-    "vite-node": "^3.2.4",
-    "vitest": "^3.2.4",
+    "@vitejs/plugin-react": "^6.1.0",
+    "jsdom": "^30.0.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vite-node": "^6.0.0",
+    "vitest": "^4.1.11",
     "wxt": "^0.21.4"
   }
 }
