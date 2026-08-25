@@ -6,7 +6,7 @@ Thank you for helping improve the project. Changes should stay focused on the ex
 
 Requirements:
 
-- Node.js 22 or newer
+- Node.js 22.12 or newer
 - npm
 - Chrome or Edge for native extension testing
 
