@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AIHttpError, AITimeoutError, OpenAICompatibleClient } from "../../src/ai";
+import { AIHttpError, AITimeoutError, OpenAICompatibleClient, explicitProviderError, modelFamily } from "../../src/ai";
 import { AI_PROVIDER_PRESETS } from "../../src/ai/providers";
 
 function response(status: number, body: unknown) {
@@ -408,5 +408,129 @@ describe("OpenAI-compatible client", () => {
 
     await expect(client.complete([{ role: "user", content: "return json" }]))
       .rejects.toBeInstanceOf(AITimeoutError);
+  });
+});
+
+describe("router gateway compatibility", () => {
+  const routed = (model: string, providerId?: "anthropic") => ({
+    ...(providerId ? { providerId } : {}),
+    baseUrl: "https://router.test/api/v1",
+    apiKey: "sk-test",
+    model
+  });
+
+  it("unwraps the {data:{choices}} envelope that router gateways return", async () => {
+    const client = new OpenAICompatibleClient(routed("deepseek/deepseek-v4.1-flash"), {
+      fetch: async () => response(200, {
+        data: { choices: [{ message: { content: '{"ok":true}' } }] },
+        success: true
+      })
+    });
+
+    await expect(client.completeJSON([{ role: "user", content: "classify" }])).resolves.toEqual({ ok: true });
+  });
+
+  it("unwraps an enveloped Anthropic-style content array", async () => {
+    const client = new OpenAICompatibleClient(routed("anthropic/claude-haiku-5.5", "anthropic"), {
+      fetch: async () => response(200, {
+        data: { content: [{ type: "text", text: '{"ok":true}' }] },
+        success: true
+      })
+    });
+
+    await expect(client.completeJSON([{ role: "user", content: "classify" }])).resolves.toEqual({ ok: true });
+  });
+
+  it("unwraps a doubly enveloped model list", async () => {
+    const client = new OpenAICompatibleClient(config, {
+      fetch: async () => response(200, { data: { data: [{ id: "model-b" }, { id: "model-a" }] }, success: true })
+    });
+
+    await expect(client.testConnection()).resolves.toEqual({ ok: true, status: 200, models: ["model-a", "model-b"] });
+  });
+
+  it("leaves a native top-level choices payload untouched", async () => {
+    const client = new OpenAICompatibleClient(config, {
+      fetch: async () => response(200, {
+        choices: [{ message: { content: '{"ok":true}' } }],
+        data: { unrelated: true }
+      })
+    });
+
+    await expect(client.completeJSON([{ role: "user", content: "classify" }])).resolves.toEqual({ ok: true });
+  });
+
+  it("reports the gateway wording when an HTTP 200 body carries an error envelope", async () => {
+    const client = new OpenAICompatibleClient(config, {
+      fetch: async () => response(200, { error: "empty response content", success: false })
+    });
+
+    await expect(client.complete([{ role: "user", content: "classify" }]))
+      .rejects.toThrow("empty response content");
+  });
+
+  it("reports a string error body returned with a failing status", async () => {
+    const client = new OpenAICompatibleClient(config, {
+      fetch: async () => response(500, { error: "empty response content", success: false }),
+      retry: { maxRetries: 0 }
+    });
+
+    await expect(client.complete([{ role: "user", content: "classify" }]))
+      .rejects.toThrow("empty response content");
+  });
+
+  it("reports a {code, message} gateway error body", async () => {
+    const client = new OpenAICompatibleClient(config, {
+      fetch: async () => response(403, {
+        code: "API_REQUEST_ERROR_CODE",
+        message: "deepseek/deepseek-v4-flash is only available via the vendor product surfaces"
+      }),
+      retry: { maxRetries: 0 }
+    });
+
+    await expect(client.complete([{ role: "user", content: "classify" }]))
+      .rejects.toThrow("only available via the vendor product surfaces");
+  });
+
+  it("extracts provider error wording from every supported body shape", () => {
+    expect(explicitProviderError('{"error":"empty response content","success":false}')).toBe("empty response content");
+    expect(explicitProviderError('{"error":{"message":"bad key"}}')).toBe("bad key");
+    expect(explicitProviderError('{"code":"X","message":"unsupported model"}')).toBe("unsupported model");
+    expect(explicitProviderError('{"unrelated":true}')).toBeUndefined();
+    expect(explicitProviderError("plain text failure")).toBeUndefined();
+    expect(explicitProviderError("")).toBeUndefined();
+  });
+
+  it("reads the model family through a vendor namespace", () => {
+    expect(modelFamily("deepseek/deepseek-v4.1-flash")).toBe("deepseek-v4.1-flash");
+    expect(modelFamily("~deepseek/deepseek-flash-latest")).toBe("deepseek-flash-latest");
+    expect(modelFamily("deepseek-v4-flash")).toBe("deepseek-v4-flash");
+    expect(modelFamily("anthropic/claude-haiku-5.5")).toBe("claude-haiku-5.5");
+  });
+
+  it("sends the DeepSeek thinking control for a namespaced DeepSeek model ID", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const client = new OpenAICompatibleClient(routed("deepseek/deepseek-v4.1-flash"), {
+      fetch: async (_url, init) => {
+        bodies.push(JSON.parse(init?.body ?? "{}") as Record<string, unknown>);
+        return response(200, { data: { choices: [{ message: { content: '{"ok":true}' } }] } });
+      }
+    });
+
+    await client.completeJSON([{ role: "user", content: "classify" }]);
+    expect(bodies[0]).toMatchObject({ thinking: { type: "disabled" } });
+  });
+
+  it("does not send the DeepSeek thinking control for an unrelated routed model", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const client = new OpenAICompatibleClient(routed("anthropic/claude-haiku-5.5"), {
+      fetch: async (_url, init) => {
+        bodies.push(JSON.parse(init?.body ?? "{}") as Record<string, unknown>);
+        return response(200, { data: { choices: [{ message: { content: '{"ok":true}' } }] } });
+      }
+    });
+
+    await client.completeJSON([{ role: "user", content: "classify" }]);
+    expect(bodies[0]).not.toHaveProperty("thinking");
   });
 });

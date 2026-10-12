@@ -45,21 +45,39 @@ function isAbortException(error: unknown): boolean {
   );
 }
 
-function providerErrorMessage(body: string): string {
-  if (!body) return translate(getAppLanguage(), "ai.providerError");
+function trimmedString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/**
+ * Returns the provider's own error wording from a response body, or undefined
+ * when the body carries none. Gateways report failures as `{error:{message}}`,
+ * as a plain string in `error` (Cline), or as a `{code, message}` pair.
+ */
+export function explicitProviderError(body: string): string | undefined {
+  if (!body) return undefined;
   try {
     const parsed: unknown = JSON.parse(body);
-    if (typeof parsed === "object" && parsed !== null && "error" in parsed) {
-      const providerError = (parsed as { error?: unknown }).error;
-      if (typeof providerError === "object" && providerError !== null && "message" in providerError) {
-        const message = (providerError as { message?: unknown }).message;
-        if (typeof message === "string" && message.length < 500) return message;
+    if (typeof parsed === "object" && parsed !== null) {
+      const record = parsed as { error?: unknown; message?: unknown };
+      const providerError = record.error;
+      if (typeof providerError === "object" && providerError !== null) {
+        const nested = trimmedString((providerError as { message?: unknown }).message);
+        if (nested && nested.length < 500) return nested;
       }
+      const direct = trimmedString(providerError) ?? trimmedString(record.message);
+      if (direct && direct.length < 500) return direct;
     }
   } catch {
     // Error bodies are diagnostic only; the status-specific error remains useful.
   }
-  return body.slice(0, 500);
+  return undefined;
+}
+
+function providerErrorMessage(body: string): string {
+  const explicit = explicitProviderError(body);
+  if (explicit) return explicit;
+  return body ? body.slice(0, 500) : translate(getAppLanguage(), "ai.providerError");
 }
 
 function statusError(response: AIResponseLike): AIError {

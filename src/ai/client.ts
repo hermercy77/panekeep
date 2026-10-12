@@ -1,7 +1,7 @@
 import type { AIConfig } from "../shared/contracts";
 import { AIConfigError, AIHttpError, AIInvalidJsonError, AIValidationError } from "./errors";
 import { normalizeAIConfig } from "./config";
-import { fetchWithRetry, type AIFetch, type RetryOptions } from "./http";
+import { explicitProviderError, fetchWithRetry, type AIFetch, type RetryOptions } from "./http";
 import { parseStrictJson } from "./schema";
 import { redactSecrets, type DebugLogger } from "../debug/logger";
 import { ensureAIOriginPermission } from "./permissions";
@@ -95,12 +95,24 @@ function headers(config: AIConfig): Record<string, string> {
   };
 }
 
+/**
+ * Strip a leading vendor namespace so routed model IDs such as
+ * `deepseek/deepseek-v4.1-flash` or `~deepseek/deepseek-flash-latest` are read
+ * as the family they belong to. Direct IDs like `deepseek-v4-flash` are
+ * returned unchanged.
+ */
+export function modelFamily(model: string): string {
+  return model.toLowerCase().trim().replace(/^~?[a-z0-9][a-z0-9._-]*\//, "");
+}
+
 function isDeepSeekCompatible(config: AIConfig): boolean {
+  let hostname = "";
   try {
-    return new URL(config.baseUrl).hostname.toLowerCase().includes("deepseek") || config.model.toLowerCase().startsWith("deepseek-");
+    hostname = new URL(config.baseUrl).hostname.toLowerCase();
   } catch {
-    return config.model.toLowerCase().startsWith("deepseek-");
+    // Fall back to the model ID when the Base URL cannot be parsed.
   }
+  return hostname.includes("deepseek") || modelFamily(config.model).startsWith("deepseek");
 }
 
 function isGPT55(config: AIConfig): boolean {
@@ -126,13 +138,44 @@ async function readJSON(response: { json?: () => Promise<unknown>; text?: () => 
   throw new AIInvalidJsonError(tr("ai.emptyResponse"));
 }
 
-function extractContent(payload: unknown): string {
-  if (typeof payload !== "object" || payload === null || !("choices" in payload)) {
-    throw new AIHttpError(tr("ai.noChoices"), 200);
+/**
+ * Some OpenAI-compatible gateways wrap the native payload in an envelope, for
+ * example `{"data": {"choices": [...]}, "success": true}`. Unwrap only a
+ * single envelope that actually carries a payload key, so a native response is
+ * never reshaped and an unrelated `data` field is never mistaken for one.
+ */
+function unwrapGatewayEnvelope(payload: unknown): unknown {
+  if (typeof payload !== "object" || payload === null) return payload;
+  if ("choices" in payload || "content" in payload) return payload;
+  const envelope = (payload as { data?: unknown }).data;
+  if (typeof envelope === "object" && envelope !== null && ("choices" in envelope || "content" in envelope)) {
+    return envelope;
   }
-  const choices = (payload as { choices?: unknown }).choices;
+  return payload;
+}
+
+/**
+ * A gateway can answer with HTTP 200 and still report a failure in the body,
+ * for example `{"error": "empty response content", "success": false}`. Surface
+ * that wording instead of a generic "no usable choices" message.
+ */
+function gatewayError(payload: unknown): string | undefined {
+  try {
+    const serialized = JSON.stringify(payload);
+    return serialized === undefined ? undefined : explicitProviderError(serialized);
+  } catch {
+    return undefined;
+  }
+}
+
+function extractContent(payload: unknown): string {
+  const body = unwrapGatewayEnvelope(payload);
+  if (typeof body !== "object" || body === null || !("choices" in body)) {
+    throw new AIHttpError(gatewayError(payload) ?? tr("ai.noChoices"), 200);
+  }
+  const choices = (body as { choices?: unknown }).choices;
   if (!Array.isArray(choices) || choices.length === 0) {
-    throw new AIHttpError(tr("ai.noChoices"), 200);
+    throw new AIHttpError(gatewayError(payload) ?? tr("ai.noChoices"), 200);
   }
   const message = choices[0] && typeof choices[0] === "object" ? (choices[0] as { message?: unknown }).message : undefined;
   const content = message && typeof message === "object" ? (message as { content?: unknown }).content : undefined;
@@ -148,7 +191,8 @@ function extractContent(payload: unknown): string {
 }
 
 function extractAnthropicContent(payload: unknown): string {
-  const content = typeof payload === "object" && payload !== null ? (payload as { content?: unknown }).content : undefined;
+  const body = unwrapGatewayEnvelope(payload);
+  const content = typeof body === "object" && body !== null ? (body as { content?: unknown }).content : undefined;
   if (!Array.isArray(content)) throw new AIHttpError(tr("ai.noContent"), 200);
   const text = content
     .filter((part): part is { text: string } => typeof part === "object" && part !== null && typeof (part as { text?: unknown }).text === "string")
@@ -160,14 +204,21 @@ function extractAnthropicContent(payload: unknown): string {
 
 const NON_CHAT_MODEL_TYPES = new Set(["audio", "embedding", "image", "moderation", "rerank", "speech", "transcription", "video"]);
 
+function modelCandidates(payload: unknown): unknown[] | undefined {
+  if (Array.isArray(payload)) return payload;
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const data = (payload as { data?: unknown }).data;
+  if (Array.isArray(data)) return data;
+  // A gateway can wrap the standard `{data: [...]}` list in its own envelope.
+  if (typeof data === "object" && data !== null && Array.isArray((data as { data?: unknown }).data)) {
+    return (data as { data: unknown[] }).data;
+  }
+  const models = (payload as { models?: unknown }).models;
+  return Array.isArray(models) ? models : undefined;
+}
+
 function extractModels(payload: unknown): string[] {
-  const candidates = Array.isArray(payload)
-    ? payload
-    : typeof payload === "object" && payload !== null && Array.isArray((payload as { data?: unknown }).data)
-      ? (payload as { data: unknown[] }).data
-      : typeof payload === "object" && payload !== null && Array.isArray((payload as { models?: unknown }).models)
-        ? (payload as { models: unknown[] }).models
-        : undefined;
+  const candidates = modelCandidates(payload);
   if (!candidates) throw new AIHttpError(tr("ai.invalidModelsResponse"), 200);
   return [...new Set(candidates
     .map((item) => {

@@ -45,9 +45,16 @@ export interface BatchOrganizationResult {
 const DEFAULT_BATCH_SIZE = 50;
 const DEFAULT_REQUEST_CONCURRENCY = 3;
 
-/** Keep JSON generation bounded without starving a 50-tab result. */
+/**
+ * Keep JSON generation bounded without truncating a valid result. Measured
+ * against real gateways, a 20-tab preview returns roughly 1.4k-2.1k characters
+ * of JSON, and reasoning models spend part of the budget before emitting it.
+ * The floor is therefore 2,048 rather than 512: too small a budget makes the
+ * provider stop at `finish_reason: length` and the truncated JSON then fails
+ * validation, which reads as an unexplained AI failure to the user.
+ */
 export function organizationOutputTokenBudget(tabCount: number): number {
-  return Math.min(2_048, Math.max(512, 256 + Math.max(0, Math.floor(tabCount)) * 30));
+  return Math.min(4_096, Math.max(2_048, 256 + Math.max(0, Math.floor(tabCount)) * 60));
 }
 
 async function mapWithConcurrency<T, R>(

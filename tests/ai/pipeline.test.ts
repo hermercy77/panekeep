@@ -191,10 +191,10 @@ describe("organization pipeline", () => {
   });
 
   it("scales the JSON output budget with the selected tab count", () => {
-    expect(organizationOutputTokenBudget(3)).toBe(512);
-    expect(organizationOutputTokenBudget(20)).toBe(856);
-    expect(organizationOutputTokenBudget(50)).toBe(1_756);
-    expect(organizationOutputTokenBudget(500)).toBe(2_048);
+    expect(organizationOutputTokenBudget(3)).toBe(2_048);
+    expect(organizationOutputTokenBudget(20)).toBe(2_048);
+    expect(organizationOutputTokenBudget(50)).toBe(3_256);
+    expect(organizationOutputTokenBudget(500)).toBe(4_096);
   });
 
   it("falls back to safe request concurrency for non-finite input", async () => {
