@@ -43,5 +43,9 @@ jobs:
       - name: Verify release manifests and assets
         run: npm run verify:release
 
+      # Only the production dependency graph is packaged into the extension.
+      # Development-only toolchain advisories are tracked by Dependabot (see
+      # .github/dependabot.yml, npm-development group) and must not block the
+      # release pipeline, so this audit matches the step name exactly.
       - name: Audit runtime dependencies
-        run: npm audit --audit-level=low
+        run: npm audit --omit=dev --audit-level=low

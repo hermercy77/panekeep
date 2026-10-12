@@ -10,7 +10,7 @@ Do not mark a release ready from automated checks alone. Complete every applicab
 - [ ] `npm run test:i18n` passes.
 - [ ] `npm test -- --run` passes.
 - [ ] `npm run eval:ai` passes.
-- [ ] `npm audit --audit-level=low` reports zero vulnerabilities.
+- [ ] `npm audit --omit=dev --audit-level=low` reports zero runtime vulnerabilities. Development-only toolchain advisories are tracked by Dependabot instead of blocking the release.
 - [ ] Chrome and Edge production builds pass.
 - [ ] Generated manifests contain only reviewed permissions and include all icon sizes.
 - [ ] Every user-visible term and manifest message is complete in `zh-CN` and `en`.
