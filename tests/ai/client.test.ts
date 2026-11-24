@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { AIHttpError, AITimeoutError, OpenAICompatibleClient, explicitProviderError, modelFamily } from "../../src/ai";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AIHttpError, AITimeoutError, OpenAICompatibleClient, explicitProviderError, fetchWithRetry, modelFamily } from "../../src/ai";
 import { AI_PROVIDER_PRESETS } from "../../src/ai/providers";
 
 function response(status: number, body: unknown) {
@@ -129,6 +129,24 @@ describe("OpenAI-compatible client", () => {
     expect(requestBody).not.toHaveProperty("temperature");
     expect(requestBody).not.toHaveProperty("response_format");
     expect(requestBody).not.toHaveProperty("thinking");
+  });
+
+  it("surfaces Anthropic token errors with the original Messages payload", async () => {
+    const message = "This endpoint rejected max_tokens. Use max_completion_tokens instead.";
+    const fetch = vi.fn(async (_url: string, _init?: { body?: string }) => response(400, { error: { message } }));
+    const client = new OpenAICompatibleClient({
+      providerId: "anthropic",
+      baseUrl: "https://api.anthropic.com/v1",
+      apiKey: "anthropic-test",
+      model: "claude-sonnet-test"
+    }, { fetch });
+
+    await expect(client.complete([{ role: "user", content: "classify" }], { maxTokens: 900 }))
+      .rejects.toMatchObject({ status: 400, message });
+    expect(fetch).toHaveBeenCalledOnce();
+    const requestBody = JSON.parse(fetch.mock.calls[0][1]?.body ?? "{}");
+    expect(requestBody).toHaveProperty("max_tokens", 900);
+    expect(requestBody).not.toHaveProperty("max_completion_tokens");
   });
 
   it("falls back when a provider cannot disable thinking", async () => {
@@ -408,6 +426,75 @@ describe("OpenAI-compatible client", () => {
 
     await expect(client.complete([{ role: "user", content: "return json" }]))
       .rejects.toBeInstanceOf(AITimeoutError);
+  });
+});
+
+describe("HTTP retry budget", () => {
+  afterEach(() => vi.useRealTimers());
+
+  const now = Date.UTC(2026, 0, 1);
+  const url = "https://provider.test/v1/chat/completions";
+  const rateLimited = (retryAfter: string) => new Response(JSON.stringify({ error: { message: "slow down" } }), {
+    status: 429,
+    headers: { "Retry-After": retryAfter }
+  });
+
+  it.each(["2", new Date(now + 2_000).toUTCString()])("waits for Retry-After %s before trying again", async (retryAfter) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const fetch = vi.fn().mockResolvedValueOnce(rateLimited(retryAfter)).mockResolvedValueOnce(response(200, {}));
+
+    const pending = fetchWithRetry(fetch, url, {}, { deadlineAt: now + 3_000 });
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(fetch).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(pending).resolves.toMatchObject({ status: 200 });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns the 429 at once when Retry-After consumes the remaining budget", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const fetch = vi.fn().mockResolvedValueOnce(rateLimited("2"));
+
+    await expect(fetchWithRetry(fetch, url, {}, { deadlineAt: now + 2_000 }))
+      .rejects.toMatchObject({ code: "rate_limit", status: 429, message: "slow down" });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(Date.now()).toBe(now);
+  });
+
+  it("cancels a pending Retry-After delay immediately", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const controller = new AbortController();
+    const fetch = vi.fn().mockResolvedValueOnce(rateLimited("2"));
+    const pending = fetchWithRetry(fetch, url, {}, { deadlineAt: now + 3_000, signal: controller.signal });
+    await vi.advanceTimersByTimeAsync(0);
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ code: "aborted" });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("shrinks the next attempt to the time left after Retry-After", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const fetch = vi.fn().mockResolvedValueOnce(rateLimited("1")).mockImplementationOnce(() => new Promise(() => undefined));
+    const pending = fetchWithRetry(fetch, url, {}, { deadlineAt: now + 1_500, maxRetries: 2 });
+    const timedOut = expect(pending).rejects.toBeInstanceOf(AITimeoutError);
+
+    await vi.advanceTimersByTimeAsync(1_499);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const secondSignal = fetch.mock.calls[1][1].signal;
+    expect(secondSignal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await timedOut;
+    expect(secondSignal.aborted).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });
 

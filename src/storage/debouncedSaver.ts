@@ -16,7 +16,7 @@ export class DebouncedSaver {
     if (this.timer !== undefined) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      void this.flush();
+      void this.flush().catch(() => undefined);
     }, this.delayMs);
   }
 
@@ -25,19 +25,23 @@ export class DebouncedSaver {
       clearTimeout(this.timer);
       this.timer = undefined;
     }
-    if (!this.pending) {
-      await this.running;
-      return;
-    }
-    this.pending = false;
-    const operation = Promise.resolve(this.saveOperation());
-    this.running = operation;
-    try {
-      await operation;
-    } finally {
-      if (this.running === operation) this.running = undefined;
-      if (this.pending) await this.flush();
-    }
+    if (this.running) return this.running;
+    if (!this.pending) return;
+
+    this.running = Promise.resolve().then(async () => {
+      try {
+        while (this.pending) {
+          this.pending = false;
+          await this.saveOperation();
+        }
+      } catch (error) {
+        this.pending = true;
+        throw error;
+      } finally {
+        this.running = undefined;
+      }
+    });
+    return this.running;
   }
 
   cancel(): void {

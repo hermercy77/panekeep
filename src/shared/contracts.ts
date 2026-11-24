@@ -67,6 +67,18 @@ export const aiConfigSchema = z.object({
 });
 export type AIConfig = z.infer<typeof aiConfigSchema>;
 
+export const aiProfileSchema = aiConfigSchema.extend({
+  id: z.string().min(1),
+  name: z.string().min(1)
+});
+export type AIProfile = z.infer<typeof aiProfileSchema>;
+
+export const aiSettingsSchema = z.object({
+  activeProfileId: z.string().nullable().default(null),
+  profiles: z.array(aiProfileSchema).default([])
+});
+export type AISettings = z.infer<typeof aiSettingsSchema>;
+
 export const organizationModeSchema = z.enum(["purpose", "type"]);
 export type OrganizationMode = z.infer<typeof organizationModeSchema>;
 

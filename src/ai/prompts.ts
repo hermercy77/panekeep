@@ -49,12 +49,21 @@ export function buildOrganizationSystemPrompt(mode: OrganizationMode, language: 
 }
 
 function safeTabForPrompt(tab: OrganizationTabInput): Record<string, unknown> {
+  let url = tab.url.split(/[?#]/, 1)[0];
   let domain = "";
-  try { domain = new URL(tab.url).hostname.replace(/^www\./, ""); } catch { /* retain empty domain */ }
+  try {
+    const parsed = new URL(tab.url);
+    domain = parsed.hostname.replace(/^www\./, "");
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      url = parsed.origin + parsed.pathname;
+    }
+  } catch {
+    if (/^\s*https?:/i.test(tab.url)) url = "";
+  }
   return {
     id: tab.id,
     title: (tab.title ?? "").slice(0, 200),
-    url: tab.url.slice(0, 300),
+    url: url.slice(0, 300),
     domain,
     ...(tab.workspaceId ? { workspaceId: tab.workspaceId } : {})
   };
@@ -66,8 +75,8 @@ export function buildOrganizationUserPrompt(options: OrganizationPromptOptions):
   const workspaceLines = (options.existingWorkspaces ?? []).map((workspace) => ({
     id: workspace.id,
     name: workspace.name,
-    description: workspace.description,
-    tags: workspace.tags
+    description: workspace.description.slice(0, 80),
+    tags: workspace.tags.slice(0, 5)
   }));
   return [
     `Organization mode: ${options.mode}`,

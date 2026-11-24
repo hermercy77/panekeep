@@ -58,10 +58,23 @@ export function parseBackup(value: unknown): Backup {
   }
 
   const parsed = backupSchema.safeParse(candidate);
-  if (!parsed.success) {
+  if (!parsed.success || !hasValidReferences(parsed.data)) {
     throw new Error(translate(getAppLanguage(), "backup.invalid"));
   }
   return parsed.data;
+}
+
+function hasValidReferences({ windows, workspaces, tabs }: Backup): boolean {
+  const windowKeys = new Set(windows.map((window) => window.key));
+  const workspaceWindows = new Map(workspaces.map((workspace) => [workspace.id, workspace.windowKey]));
+  const tabIds = new Set(tabs.map((tab) => tab.id));
+
+  return windowKeys.size === windows.length
+    && workspaceWindows.size === workspaces.length
+    && tabIds.size === tabs.length
+    && workspaces.every((workspace) => windowKeys.has(workspace.windowKey))
+    && tabs.every((tab) => windowKeys.has(tab.windowKey)
+      && (tab.workspaceId === null || workspaceWindows.get(tab.workspaceId) === tab.windowKey));
 }
 
 export function detectBrowserFamily(userAgent = getUserAgent()): string {

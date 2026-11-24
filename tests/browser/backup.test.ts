@@ -1,6 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { createBackup, parseBackup, stringifyBackup } from "../../src/shared/backup";
+import { createBackup, parseBackup, stringifyBackup, type StateSnapshot } from "../../src/shared/backup";
 import { classifyBrowserTab } from "../../src/browser/classify";
+import { getAppLanguage, translate } from "../../src/i18n";
+
+function linkedSnapshot(): StateSnapshot {
+  const first = { key: "first", nativeId: 1, name: "First", order: 0, isCurrent: true, expanded: true };
+  const second = { ...first, key: "second", nativeId: 2, name: "Second", order: 1, isCurrent: false };
+  return {
+    windows: [first, second],
+    workspaces: [{
+      id: "work", windowKey: first.key, name: "Work", description: "", tags: [], color: "blue",
+      order: 0, createdAt: 1, updatedAt: 1
+    }],
+    tabs: [{
+      id: "tab", windowKey: first.key, workspaceId: "work", kind: "normal", url: "https://example.test",
+      index: 0, pinned: false
+    }]
+  };
+}
 
 describe("backup and browser classification", () => {
   it("round-trips workspace, tab and special-page metadata without secrets", () => {
@@ -55,6 +72,21 @@ describe("backup and browser classification", () => {
     expect(classifyBrowserTab({ id: 1, url: "chrome://settings", pinned: false })).toBe("special");
     expect(classifyBrowserTab({ id: 2, url: "https://example.com", pinned: true })).toBe("fixed");
     expect(classifyBrowserTab({ id: 3, url: "https://example.com", pinned: false })).toBe("normal");
+  });
+
+  it.each<[string, (state: StateSnapshot) => void]>([
+    ["duplicate window key", (state) => { state.windows[1].key = state.windows[0].key; }],
+    ["duplicate workspace ID", (state) => { state.workspaces.push({ ...state.workspaces[0], windowKey: "second" }); }],
+    ["duplicate tab ID", (state) => { state.tabs.push({ ...state.tabs[0], index: 1 }); }],
+    ["orphaned workspace", (state) => { state.workspaces[0].windowKey = "missing"; }],
+    ["orphaned tab", (state) => { Object.assign(state.tabs[0], { windowKey: "missing", workspaceId: null }); }],
+    ["missing workspace reference", (state) => { state.tabs[0].workspaceId = "missing"; }],
+    ["cross-window workspace reference", (state) => { state.tabs[0].windowKey = "second"; }]
+  ])("rejects a backup with a %s", (_label, damage) => {
+    const snapshot = linkedSnapshot();
+    damage(snapshot);
+    const malformed = createBackup(snapshot);
+    expect(() => parseBackup(malformed)).toThrow(translate(getAppLanguage(), "backup.invalid"));
   });
 
   it("returns concise import errors without leaking validator internals", () => {

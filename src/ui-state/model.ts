@@ -38,7 +38,10 @@ export interface PaneKeepAdapter {
   previewWorkspaceMerge(sourceWorkspaceId: string, targetWorkspaceId: string): Promise<WorkspaceMergePreview>;
   mergeWorkspaces(preview: WorkspaceMergePreview): Promise<void>;
   activateTab(tabId: string): Promise<void>;
-  requestOrganization(mode: OrganizationMode, tabIds?: string[]): Promise<OrganizationPreview>;
+  closeTabs?(tabIds: string[]): Promise<{ closedTabIds: string[]; skippedTabIds: string[] }>;
+  setTabPinned?(tabId: string, pinned: boolean): Promise<void>;
+  requestOrganization(mode: OrganizationMode, tabIds?: string[], expectedOrigin?: string): Promise<OrganizationPreview>;
+  cancelOrganization?(): Promise<void>;
   applyOrganization(preview: OrganizationPreview): Promise<void>;
   exportBackup?: () => Promise<string>;
   importBackup?: (json: string) => Promise<BackupImportResult>;

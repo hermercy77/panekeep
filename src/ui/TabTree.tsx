@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { AppWindow, ChevronDown, ChevronRight, GripVertical, Inbox, MoreHorizontal, Pencil, Pin, Plus, Rows3, ShieldAlert, Trash2, X } from "lucide-react";
+import { memo, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { AppWindow, ChevronDown, ChevronRight, Copy, GripVertical, Inbox, MoreHorizontal, Pencil, Pin, PinOff, Plus, Rows3, ShieldAlert, Trash2, X } from "lucide-react";
 import type { TabRecord, WindowState, Workspace } from "../shared/contracts";
 import { tabHost, tabLabel } from "../ui-state/model";
 import type { PaneKeepSnapshot } from "../ui-state/model";
@@ -30,6 +30,9 @@ interface TabTreeProps {
   onEditWorkspace: (workspace: Workspace) => void;
   onDeleteWorkspace: (workspace: Workspace) => void;
   onCreateWorkspace: (windowKey: string) => void;
+  onCloseTabs?: (tabIds: string[]) => void;
+  onTogglePinTab?: (tabId: string, pinned: boolean) => void;
+  onCopyUrl?: (url: string) => void;
 }
 
 type DragPayload =
@@ -130,9 +133,10 @@ function sortWorkspaces(workspaces: Workspace[]): Workspace[] {
 }
 
 function Favicon({ tab }: { tab: TabRecord }) {
+  const [failed, setFailed] = useState(false);
   const fallback = (tab.title?.trim() || "?").slice(0, 1).toUpperCase();
-  return tab.faviconUrl ? (
-    <img className="tab-favicon" src={tab.faviconUrl} alt="" onError={(event) => (event.currentTarget.style.display = "none")} />
+  return tab.faviconUrl && !failed ? (
+    <img className="tab-favicon" src={tab.faviconUrl} alt="" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
   ) : (
     <span className="tab-favicon-fallback" aria-hidden="true">
       {fallback}
@@ -140,7 +144,7 @@ function Favicon({ tab }: { tab: TabRecord }) {
   );
 }
 
-function TabRow({
+const TabRow = memo(function TabRow({
   tab,
   now,
   active,
@@ -149,7 +153,10 @@ function TabRow({
   onActivate,
   onToggleChecked,
   onDragStart,
-  onDragEnd
+  onDragEnd,
+  onCloseTab,
+  onTogglePin,
+  onCopyUrl
 }: {
   tab: TabRecord;
   now: number;
@@ -160,6 +167,9 @@ function TabRow({
   onToggleChecked: (shiftKey: boolean) => void;
   onDragStart: (event: DragEvent) => void;
   onDragEnd: (event: DragEvent) => void;
+  onCloseTab?: () => void;
+  onTogglePin?: () => void;
+  onCopyUrl?: () => void;
 }) {
   const { language, t } = useI18n();
   const canDrag = tab.kind !== "special";
@@ -213,9 +223,46 @@ function TabRow({
           {lastVisited ? <span className="tab-last-visited">{lastVisited}</span> : null}
         </span>
       </button>
+      {(onCopyUrl || onTogglePin || onCloseTab) ? (
+        <div className="tab-row-actions">
+          {onCopyUrl && tab.url ? (
+            <button
+              className="tab-action-button"
+              type="button"
+              aria-label={t("tree.copyUrl")}
+              title={t("tree.copyUrl")}
+              onClick={(event) => { event.stopPropagation(); onCopyUrl(); }}
+            >
+              <Copy aria-hidden="true" size={13} />
+            </button>
+          ) : null}
+          {onTogglePin && canDrag ? (
+            <button
+              className="tab-action-button"
+              type="button"
+              aria-label={tab.pinned ? t("tree.unpinTab") : t("tree.pinTab")}
+              title={tab.pinned ? t("tree.unpinTab") : t("tree.pinTab")}
+              onClick={(event) => { event.stopPropagation(); onTogglePin(); }}
+            >
+              {tab.pinned ? <PinOff aria-hidden="true" size={13} /> : <Pin aria-hidden="true" size={13} />}
+            </button>
+          ) : null}
+          {onCloseTab && canDrag ? (
+            <button
+              className="tab-action-button danger"
+              type="button"
+              aria-label={t("tree.closeTab")}
+              title={t("tree.closeTab")}
+              onClick={(event) => { event.stopPropagation(); onCloseTab(); }}
+            >
+              <X aria-hidden="true" size={13} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
-}
+});
 
 function SectionHeading({
   icon,
@@ -278,7 +325,10 @@ export function TabTree({
   onRequestWorkspaceMerge,
   onEditWorkspace,
   onDeleteWorkspace,
-  onCreateWorkspace
+  onCreateWorkspace,
+  onCloseTabs,
+  onTogglePinTab,
+  onCopyUrl
 }: TabTreeProps) {
   const { t } = useI18n();
   const [timeNow, setTimeNow] = useState(() => Date.now());
@@ -286,6 +336,7 @@ export function TabTree({
   const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
   const [activeDropTarget, setActiveDropTarget] = useState<string | null>(null);
   const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(null);
+  const [openMenuWorkspaceId, setOpenMenuWorkspaceId] = useState<string | null>(null);
   const activeDropTargetRef = useRef<string | null>(null);
   const workspaceExpandTimerRef = useRef<number | null>(null);
   const treeRef = useRef<HTMLDivElement | null>(null);
@@ -295,6 +346,22 @@ export function TabTree({
     const timer = window.setInterval(() => setTimeNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(() => {
+    if (!openMenuWorkspaceId) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (event.target instanceof Element && event.target.closest(".workspace-menu")) return;
+      setOpenMenuWorkspaceId(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenMenuWorkspaceId(null);
+    };
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openMenuWorkspaceId]);
   const windows = useMemo(() => {
     if (snapshot.windows.length) return snapshot.windows;
     const keys = [...new Set(snapshot.tabs.map((tab) => tab.windowKey))];
@@ -335,8 +402,16 @@ export function TabTree({
     }
     return ids;
   }, [collapsedTabSections, expandedWindows, expandedWorkspaces, filter, query, snapshot.tabs, snapshot.workspaces, windowScope, windows, workspaceTag]);
-  const visibleTabCount = snapshot.tabs.filter((tab) => tabMatches(tab, query, filter)).length;
-  const visibleWorkspaceCount = snapshot.workspaces.filter((workspace) => workspaceMatches(workspace, query, workspaceTag)).length;
+  const scopedWindows = useMemo(
+    () => windows.filter((item) => windowScope === "all" || item.isCurrent),
+    [windowScope, windows]
+  );
+  const scopedWindowKeys = useMemo(() => new Set(scopedWindows.map((item) => item.key)), [scopedWindows]);
+  const visibleTabCount = snapshot.tabs.filter((tab) => scopedWindowKeys.has(tab.windowKey) && tabMatches(tab, query, filter)).length;
+  const visibleWorkspaceCount = snapshot.workspaces.filter((workspace) =>
+    scopedWindowKeys.has(workspace.windowKey) && workspaceMatches(workspace, query, workspaceTag)
+  ).length;
+  const isFiltering = Boolean(query.trim() || filter !== "all" || workspaceTag);
   const sectionExpanded = (windowKey: string, kind: TabSectionKind) => !collapsedTabSections.has(`${windowKey}:${kind}`);
   const toggleSection = (windowKey: string, kind: TabSectionKind) => {
     const key = `${windowKey}:${kind}`;
@@ -494,6 +569,9 @@ export function TabTree({
       onToggleChecked={(shiftKey) => toggleCheckedTab(tab.id, shiftKey)}
       onDragStart={(event) => beginTabDrag(event, tab)}
       onDragEnd={finishDrag}
+      onCloseTab={onCloseTabs ? () => onCloseTabs([tab.id]) : undefined}
+      onTogglePin={onTogglePinTab ? () => onTogglePinTab(tab.id, !tab.pinned) : undefined}
+      onCopyUrl={onCopyUrl ? () => onCopyUrl(tab.url) : undefined}
     />
   );
 
@@ -502,8 +580,8 @@ export function TabTree({
       <span className="sr-only" aria-live="polite">
         {dragPayload?.type === "tabs" ? t("tree.movingTabs", { count: dragPayload.ids.length }) : dragPayload?.type === "workspace" ? t("tree.movingWorkspace") : ""}
       </span>
-      {!windows.length || (!visibleTabCount && !visibleWorkspaceCount) ? <EmptyTree query={query} filter={filter} /> : null}
-      {windows.filter((window) => windowScope === "all" || window.isCurrent).map((window, windowIndex) => {
+      {!scopedWindows.length || (!visibleTabCount && !visibleWorkspaceCount) ? <EmptyTree query={query} filter={filter} /> : null}
+      {scopedWindows.map((window, windowIndex) => {
         const windowTabs = snapshot.tabs.filter((tab) => tab.windowKey === window.key);
         const fixedTabs = windowTabs.filter((tab) => tab.kind !== "special" && (tab.pinned || tab.kind === "fixed")).filter((tab) => tabMatches(tab, query, filter));
         const specialTabs = windowTabs.filter((tab) => tab.kind === "special").filter((tab) => tabMatches(tab, query, filter));
@@ -521,9 +599,9 @@ export function TabTree({
         const canDropIntoWindowUnclassified = canMoveDraggedTabs
           && normalDraggedTabs.length > 0
           && normalDraggedTabs.some((tab) => tab.workspaceId !== null || tab.windowKey !== window.key);
-        const showUnclassified = true;
-        const showSpecial = true;
-        const showFixed = true;
+        const showUnclassified = !isFiltering || unclassified.length > 0 || canDropIntoWindowUnclassified;
+        const showSpecial = !isFiltering || specialTabs.length > 0;
+        const showFixed = !isFiltering || fixedTabs.length > 0;
         return (
           <section className={window.isCurrent ? "window-section current" : "window-section"} data-level="window" key={window.key}>
             <button className="window-heading" type="button" onClick={() => onToggleWindow(window.key)} aria-expanded={isExpanded}>
@@ -623,25 +701,35 @@ export function TabTree({
                           <span className="workspace-name">{workspace.name}</span>
                           <span className="workspace-count">{workspaceTabs.length}</span>
                         </button>
-                        <details className="workspace-menu" onClick={(event) => event.stopPropagation()}>
-                          <summary className="mini-icon-button workspace-menu-trigger" aria-label={t("tree.moreActions", { name: workspace.name })} title={t("tree.moreActions", { name: workspace.name })}>
+                        <div className="workspace-menu" onClick={(event) => event.stopPropagation()}>
+                          <button
+                            className="mini-icon-button workspace-menu-trigger"
+                            type="button"
+                            aria-haspopup="menu"
+                            aria-expanded={openMenuWorkspaceId === workspace.id}
+                            aria-label={t("tree.moreActions", { name: workspace.name })}
+                            title={t("tree.moreActions", { name: workspace.name })}
+                            onClick={() => setOpenMenuWorkspaceId((current) => current === workspace.id ? null : workspace.id)}
+                          >
                             <MoreHorizontal aria-hidden="true" size={15} />
-                          </summary>
-                          <div className="workspace-menu-list">
-                            <button type="button" onClick={(event) => {
-                              event.currentTarget.closest("details")?.removeAttribute("open");
-                              onEditWorkspace(workspace);
-                            }}>
-                              <Pencil aria-hidden="true" size={14} />{t("common.edit")}
-                            </button>
-                            <button className="danger" type="button" onClick={(event) => {
-                              event.currentTarget.closest("details")?.removeAttribute("open");
-                              onDeleteWorkspace(workspace);
-                            }}>
-                              <Trash2 aria-hidden="true" size={14} />{t("common.delete")}
-                            </button>
-                          </div>
-                        </details>
+                          </button>
+                          {openMenuWorkspaceId === workspace.id ? (
+                            <div className="workspace-menu-list" role="menu">
+                              <button type="button" role="menuitem" onClick={() => {
+                                setOpenMenuWorkspaceId(null);
+                                onEditWorkspace(workspace);
+                              }}>
+                                <Pencil aria-hidden="true" size={14} />{t("common.edit")}
+                              </button>
+                              <button className="danger" type="button" role="menuitem" onClick={() => {
+                                setOpenMenuWorkspaceId(null);
+                                onDeleteWorkspace(workspace);
+                              }}>
+                                <Trash2 aria-hidden="true" size={14} />{t("common.delete")}
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
                         {workspace.description ? <span className="description-tooltip">{workspace.description}</span> : null}
                       </div>
                       <span className="drop-guidance" aria-hidden="true">{tabDropGuidance}</span>

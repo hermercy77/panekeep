@@ -264,8 +264,47 @@ function createInMemoryAdapter(initial: PaneKeepSnapshot = emptySnapshot): PaneK
       // The browser adapter turns this into a tabs.update call. The in-memory
       // adapter keeps activation local so the UI remains usable in a preview.
     },
+    async closeTabs(tabIds) {
+      const requested = new Set(tabIds);
+      const closedTabIds: string[] = [];
+      const skippedTabIds: string[] = [];
+      const nextTabs: TabRecord[] = [];
+      for (const tab of snapshot.tabs) {
+        if (!requested.has(tab.id)) {
+          nextTabs.push(tab);
+          continue;
+        }
+        if (tab.kind === "special") {
+          skippedTabIds.push(tab.id);
+          nextTabs.push(tab);
+        } else {
+          closedTabIds.push(tab.id);
+        }
+      }
+      for (const id of requested) {
+        if (!closedTabIds.includes(id) && !skippedTabIds.includes(id)) skippedTabIds.push(id);
+      }
+      snapshot = { ...snapshot, tabs: nextTabs };
+      publish();
+      return { closedTabIds, skippedTabIds };
+    },
+    async setTabPinned(tabId, pinned) {
+      const tab = snapshot.tabs.find((item) => item.id === tabId);
+      if (!tab) throw new Error(tr("error.tabMissing"));
+      if (tab.kind === "special") return;
+      snapshot = {
+        ...snapshot,
+        tabs: snapshot.tabs.map((item) => (item.id === tabId
+          ? { ...item, pinned, kind: pinned ? "fixed" : "normal", workspaceId: pinned ? null : item.workspaceId }
+          : item))
+      };
+      publish();
+    },
     async requestOrganization() {
       throw new Error(tr("error.configureAI"));
+    },
+    async cancelOrganization() {
+      return;
     },
     async applyOrganization(preview) {
       const nonEmptyGroups = preview.groups.filter((group) => group.tabIds.length > 0);
@@ -329,23 +368,30 @@ function createInMemoryAdapter(initial: PaneKeepSnapshot = emptySnapshot): PaneK
  */
 export function createBrowserAdapter(initial?: PaneKeepSnapshot): PaneKeepAdapter {
   const fallback = createInMemoryAdapter(initial);
-  const bridge = async (action: string, payload?: unknown): Promise<unknown> => {
+  const hasExtensionRuntime = () => typeof getRuntime()?.sendMessage === "function";
+  let activeOrganizationRequestId: string | null = null;
+
+  const bridge = async (action: string, payload?: unknown, options: { requireResponse?: boolean } = {}): Promise<unknown> => {
     const runtime = getRuntime();
     if (!runtime?.sendMessage) return undefined;
     try {
       const response = (await runtime.sendMessage({ source: UI_MESSAGE_SOURCE, action, payload })) as Record<string, unknown> | undefined;
-      if (!response) return undefined;
+      if (!response) {
+        if (options.requireResponse) throw new Error(tr("error.backgroundUnavailable"));
+        return undefined;
+      }
       if (response.ok === false) throw new Error(typeof response.error === "string" ? response.error : tr("error.operationFailed"));
       const remoteSnapshot = normalizeSnapshot(response.snapshot ?? response);
       if (remoteSnapshot) {
-        // Keep the fallback in sync for operations unsupported by an older
-        // background build and for browser reloads while this page is open.
         const replace = (fallback as PaneKeepAdapter & { replaceSnapshot?: (next: PaneKeepSnapshot) => void }).replaceSnapshot;
         replace?.(remoteSnapshot);
       }
       return response.result ?? response.data ?? response;
     } catch (error) {
-      if (isNoReceiverError(error)) return undefined;
+      if (isNoReceiverError(error)) {
+        if (options.requireResponse) throw new Error(tr("error.backgroundUnavailable"));
+        return undefined;
+      }
       throw error;
     }
   };
@@ -359,51 +405,100 @@ export function createBrowserAdapter(initial?: PaneKeepSnapshot): PaneKeepAdapte
       return remote ?? callFallback((adapter) => adapter.getSnapshot());
     },
     async createWorkspace(draft) {
-      const result = await bridge("workspace.create", draft);
-      if (result && typeof result === "object" && "id" in result) return result as Workspace;
+      if (hasExtensionRuntime()) {
+        const result = await bridge("workspace.create", draft, { requireResponse: true });
+        if (result && typeof result === "object" && "id" in result) return result as Workspace;
+        throw new Error(tr("error.backgroundUnavailable"));
+      }
       return callFallback((adapter) => adapter.createWorkspace(draft));
     },
     async updateWorkspace(id, draft) {
-      const result = await bridge("workspace.update", { id, draft });
-      if (result && typeof result === "object" && "id" in result) return result as Workspace;
+      if (hasExtensionRuntime()) {
+        const result = await bridge("workspace.update", { id, draft }, { requireResponse: true });
+        if (result && typeof result === "object" && "id" in result) return result as Workspace;
+        throw new Error(tr("error.backgroundUnavailable"));
+      }
       return callFallback((adapter) => adapter.updateWorkspace(id, draft));
     },
     async deleteWorkspace(id, closeTabs = false) {
-      const result = await bridge("workspace.delete", { id, closeTabs });
-      if (result === undefined || (result && typeof result === "object" && !("id" in result))) {
-        await callFallback((adapter) => adapter.deleteWorkspace(id, closeTabs));
+      if (hasExtensionRuntime()) {
+        await bridge("workspace.delete", { id, closeTabs }, { requireResponse: true });
+        return;
       }
+      await callFallback((adapter) => adapter.deleteWorkspace(id, closeTabs));
     },
     async moveTab(tabId, workspaceId) {
-      const result = await bridge("tab.move", { tabId, workspaceId });
-      if (result === undefined) await callFallback((adapter) => adapter.moveTab(tabId, workspaceId));
+      if (hasExtensionRuntime()) {
+        await bridge("tab.move", { tabId, workspaceId }, { requireResponse: true });
+        return;
+      }
+      await callFallback((adapter) => adapter.moveTab(tabId, workspaceId));
     },
     async moveTabs(tabIds, workspaceId, targetWindowKey) {
-      const result = await bridge("tabs.move", { tabIds, workspaceId, windowKey: targetWindowKey });
-      if (result && typeof result === "object" && "movedTabIds" in result && "skippedTabIds" in result) {
-        return result as MoveTabsResponse;
+      if (hasExtensionRuntime()) {
+        const result = await bridge("tabs.move", { tabIds, workspaceId, windowKey: targetWindowKey }, { requireResponse: true });
+        if (result && typeof result === "object" && "movedTabIds" in result && "skippedTabIds" in result) {
+          return result as MoveTabsResponse;
+        }
+        throw new Error(tr("error.backgroundUnavailable"));
       }
       return callFallback((adapter) => adapter.moveTabs(tabIds, workspaceId, targetWindowKey));
     },
     async moveWorkspace(workspaceId, beforeWorkspaceId) {
-      const result = await bridge("workspace.move", { workspaceId, beforeWorkspaceId });
-      if (result === undefined) await callFallback((adapter) => adapter.moveWorkspace(workspaceId, beforeWorkspaceId));
+      if (hasExtensionRuntime()) {
+        await bridge("workspace.move", { workspaceId, beforeWorkspaceId }, { requireResponse: true });
+        return;
+      }
+      await callFallback((adapter) => adapter.moveWorkspace(workspaceId, beforeWorkspaceId));
     },
     async previewWorkspaceMerge(sourceWorkspaceId, targetWorkspaceId) {
-      const result = await bridge("workspace.merge.preview", { sourceWorkspaceId, targetWorkspaceId });
-      if (result && typeof result === "object" && "sourceFingerprint" in result) return result as WorkspaceMergePreview;
+      if (hasExtensionRuntime()) {
+        const result = await bridge("workspace.merge.preview", { sourceWorkspaceId, targetWorkspaceId }, { requireResponse: true });
+        if (result && typeof result === "object" && "sourceFingerprint" in result) return result as WorkspaceMergePreview;
+        throw new Error(tr("error.mergePreviewFailed"));
+      }
       return callFallback((adapter) => adapter.previewWorkspaceMerge(sourceWorkspaceId, targetWorkspaceId));
     },
     async mergeWorkspaces(preview) {
-      const result = await bridge("workspace.merge", { preview });
-      if (result === undefined) await callFallback((adapter) => adapter.mergeWorkspaces(preview));
+      if (hasExtensionRuntime()) {
+        await bridge("workspace.merge", { preview }, { requireResponse: true });
+        return;
+      }
+      await callFallback((adapter) => adapter.mergeWorkspaces(preview));
     },
     async activateTab(tabId) {
-      const result = await bridge("tab.activate", { tabId });
-      if (result === undefined) await callFallback((adapter) => adapter.activateTab(tabId));
+      if (hasExtensionRuntime()) {
+        await bridge("tab.activate", { tabId }, { requireResponse: true });
+        return;
+      }
+      await callFallback((adapter) => adapter.activateTab(tabId));
     },
-    async requestOrganization(mode, tabIds) {
+    async closeTabs(tabIds) {
+      if (hasExtensionRuntime()) {
+        const result = await bridge("tab.close", { tabIds }, { requireResponse: true });
+        if (result && typeof result === "object" && "closedTabIds" in result && "skippedTabIds" in result) {
+          return result as { closedTabIds: string[]; skippedTabIds: string[] };
+        }
+        return { closedTabIds: [], skippedTabIds: tabIds };
+      }
+      return callFallback((adapter) => adapter.closeTabs!(tabIds));
+    },
+    async setTabPinned(tabId, pinned) {
+      if (hasExtensionRuntime()) {
+        await bridge("tab.pin", { tabId, pinned }, { requireResponse: true });
+        return;
+      }
+      await callFallback((adapter) => adapter.setTabPinned!(tabId, pinned));
+    },
+    async cancelOrganization() {
+      const requestId = activeOrganizationRequestId;
+      activeOrganizationRequestId = null;
+      if (!requestId) return;
+      await bridge("organization.cancel", { requestId }).catch(() => undefined);
+    },
+    async requestOrganization(mode, tabIds, expectedOrigin) {
       const requestId = makeId("organization");
+      activeOrganizationRequestId = requestId;
       let requestedCount = tabIds?.length ?? 0;
       if (requestedCount === 0) {
         const refreshed = normalizeSnapshot(await bridge("refresh"));
@@ -412,16 +507,20 @@ export function createBrowserAdapter(initial?: PaneKeepSnapshot): PaneKeepAdapte
       }
       const batches = Math.max(1, Math.ceil(Math.max(1, requestedCount) / ORGANIZATION_PREVIEW_BATCH_SIZE));
       const timeoutMs = batches * ORGANIZATION_PREVIEW_TIMEOUT_MS;
-      const result = await withTimeout(
-        bridge("organization.preview", { mode, tabIds, requestId }),
-        timeoutMs,
-        batches === 1
-          ? tr("error.previewTimeout")
-          : tr("error.previewBatchTimeout", { seconds: batches * 59 }),
-        () => { void bridge("organization.cancel", { requestId }).catch(() => undefined); }
-      );
-      if (result && typeof result === "object" && "groups" in result) return result as OrganizationPreview;
-      throw new Error(tr("error.configureAI"));
+      try {
+        const result = await withTimeout(
+          bridge("organization.preview", { mode, tabIds, requestId, ...(expectedOrigin ? { expectedOrigin } : {}) }),
+          timeoutMs,
+          batches === 1
+            ? tr("error.previewTimeout")
+            : tr("error.previewBatchTimeout", { seconds: batches * 59 }),
+          () => { void bridge("organization.cancel", { requestId }).catch(() => undefined); }
+        );
+        if (result && typeof result === "object" && "groups" in result) return result as OrganizationPreview;
+        throw new Error(tr("error.configureAI"));
+      } finally {
+        if (activeOrganizationRequestId === requestId) activeOrganizationRequestId = null;
+      }
     },
     async applyOrganization(preview) {
       const result = await bridge("organization.apply", { preview });

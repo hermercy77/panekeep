@@ -6,8 +6,8 @@ import type {
   Workspace
 } from "../shared/contracts";
 import { organizationPreviewSchema, organizationModeSchema } from "../shared/contracts";
-import { AIValidationError, AIConfigError, AIConflictError, AIInvalidJsonError } from "./errors";
-import { OpenAICompatibleClient, type AIClient, type ChatMessage, type OpenAICompatibleClientOptions } from "./client";
+import { AIAbortError, AIValidationError, AIConfigError, AITimeoutError, AIInvalidJsonError } from "./errors";
+import { OpenAICompatibleClient, type AIClient, type ChatMessage, type CompleteOptions, type OpenAICompatibleClientOptions } from "./client";
 import { buildOrganizationMessages } from "./prompts";
 import {
   organizationResponseSchema,
@@ -34,6 +34,7 @@ export interface OrganizationPipelineRequest {
   getCurrentSnapshot?: () => TabSnapshot | Promise<TabSnapshot>;
   getCurrentTabs?: () => readonly TabRecord[] | Promise<readonly TabRecord[]>;
   signal?: AbortSignal;
+  deadlineAt?: number;
   language?: AppLanguage;
 }
 
@@ -44,6 +45,7 @@ export interface BatchOrganizationResult {
 
 const DEFAULT_BATCH_SIZE = 50;
 const DEFAULT_REQUEST_CONCURRENCY = 3;
+const DEFAULT_ORGANIZATION_BUDGET_MS = 60_000;
 
 /**
  * Keep JSON generation bounded without truncating a valid result. Measured
@@ -103,16 +105,6 @@ function ensureTabInput(tabs: readonly TabRecord[]): void {
   }
 }
 
-function sameGroupMetadata(left: OrganizationResponse["groups"][number], right: OrganizationResponse["groups"][number]): boolean {
-  return (
-    left.name === right.name &&
-    left.description === right.description &&
-    left.existingWorkspaceId === right.existingWorkspaceId &&
-    left.tags.length === right.tags.length &&
-    left.tags.every((tag, index) => tag === right.tags[index])
-  );
-}
-
 export function mergeBatchOrganizationResponses(
   batches: readonly BatchOrganizationResult[],
   mode: OrganizationMode,
@@ -121,34 +113,31 @@ export function mergeBatchOrganizationResponses(
   existingWorkspaces: OrganizationPipelineRequest["existingWorkspaces"] = []
 ): OrganizationPreview {
   const groups: OrganizationResponse["groups"] = [];
-  const groupByKey = new Map<string, OrganizationResponse["groups"][number]>();
+  const groupByWorkspaceId = new Map<string, OrganizationResponse["groups"][number]>();
   const workspaceById = new Map((existingWorkspaces ?? []).map((workspace) => [workspace.id, workspace]));
   const unclassifiedTabIds: string[] = [];
   const seenUnclassified = new Set<string>();
 
-  for (const batch of batches) {
+  for (const [batchIndex, batch] of batches.entries()) {
     // Validate every batch before mutating the merged output.
     const response = parseAndValidateOrganizationResponse(batch.response, batch.sourceTabIds);
     for (const group of response.groups) {
-      const workspace = group.existingWorkspaceId ? workspaceById.get(group.existingWorkspaceId) : undefined;
-      if (group.existingWorkspaceId && !workspace) {
-        throw new AIValidationError(tr("ai.unknownWorkspace", { id: group.existingWorkspaceId }));
+      const id = batches.length > 1 ? `b${batchIndex}-${group.id}` : group.id;
+      const workspaceId = group.existingWorkspaceId;
+      if (workspaceId === null) {
+        groups.push({ ...group, id });
+        continue;
       }
-      const normalized = workspace
-        ? { ...group, name: workspace.name, description: workspace.description, tags: [...workspace.tags] }
-        : group;
-      const groupKey = group.existingWorkspaceId ? `existing:${group.existingWorkspaceId}` : `new:${group.id}`;
-      const existing = groupByKey.get(groupKey);
-      if (!existing) {
-        const copy = { ...normalized, tabIds: [...normalized.tabIds], tags: [...normalized.tags] };
-        groups.push(copy);
-        groupByKey.set(groupKey, copy);
-      } else {
-        if (!sameGroupMetadata(existing, normalized)) {
-          throw new AIValidationError(tr("ai.groupMetadataConflict", { id: group.id }));
-        }
-        existing.tabIds.push(...normalized.tabIds);
+      const existing = groupByWorkspaceId.get(workspaceId);
+      if (existing) {
+        existing.tabIds.push(...group.tabIds);
+        continue;
       }
+      const workspace = workspaceById.get(workspaceId);
+      if (!workspace) throw new AIValidationError(tr("ai.unknownWorkspace", { id: workspaceId }));
+      const reused = { ...group, id, name: workspace.name, description: workspace.description, tags: [...workspace.tags] };
+      groups.push(reused);
+      groupByWorkspaceId.set(workspaceId, reused);
     }
     for (const tabId of response.unclassifiedTabIds) {
       if (!seenUnclassified.has(tabId)) {
@@ -172,23 +161,25 @@ async function requestBatch(
   mode: OrganizationMode,
   existingWorkspaces: OrganizationPipelineRequest["existingWorkspaces"],
   language: AppLanguage,
-  signal?: AbortSignal
+  options: Required<Pick<CompleteOptions, "signal" | "deadlineAt">>
 ): Promise<OrganizationResponse> {
   const baseMessages: ChatMessage[] = buildOrganizationMessages({ mode, tabs, existingWorkspaces, language });
   const tabIds = tabs.map((tab) => tab.id);
   let messages = baseMessages;
   let previousRaw: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (options.signal.aborted) throw new AIAbortError();
+    if (Date.now() >= options.deadlineAt) throw new AITimeoutError();
     try {
       const raw = await client.completeJSON(messages, organizationResponseSchema, {
-        signal,
+        ...options,
         maxTokens: organizationOutputTokenBudget(tabs.length)
       });
       previousRaw = raw;
       return parseAndValidateOrganizationResponse(raw, tabIds);
     } catch (error) {
       const retryableValidation = error instanceof AIValidationError || error instanceof AIInvalidJsonError;
-      if (!retryableValidation || attempt === 1 || signal?.aborted) throw error;
+      if (!retryableValidation || attempt === 1 || options.signal.aborted) throw error;
       const correction = `The previous JSON was invalid or incomplete. Return corrected JSON only. Assign every required tab ID exactly once. Required IDs (${tabIds.length}): ${JSON.stringify(tabIds)}.`;
       messages = previousRaw === undefined
         ? [...baseMessages, { role: "user", content: correction }]
@@ -199,6 +190,7 @@ async function requestBatch(
 }
 
 export async function organizeTabs(request: OrganizationPipelineRequest): Promise<OrganizationPreview> {
+  const deadlineAt = request.deadlineAt ?? request.clientOptions?.retry?.deadlineAt ?? Date.now() + DEFAULT_ORGANIZATION_BUDGET_MS;
   const modeResult = organizationModeSchema.safeParse(request.mode);
   if (!modeResult.success) throw new AIValidationError(tr("ai.unsupportedMode"), modeResult.error.issues);
   ensureTabInput(request.tabs);
@@ -217,14 +209,15 @@ export async function organizeTabs(request: OrganizationPipelineRequest): Promis
   const abortBatches = () => batchController.abort();
   if (request.signal?.aborted) abortBatches();
   else request.signal?.addEventListener("abort", abortBatches, { once: true });
+  const batchOptions = { signal: batchController.signal, deadlineAt };
   let results: BatchOrganizationResult[];
   try {
     results = await mapWithConcurrency(batches, requestConcurrency, async (tabs) => {
-      if (batchController.signal.aborted) throw new AIConflictError(tr("ai.organizationCancelled"));
       const sourceTabIds = tabs.map((tab) => tab.id);
-      const response = await requestBatch(client, tabs, modeResult.data, request.existingWorkspaces, language, batchController.signal);
+      const response = await requestBatch(client, tabs, modeResult.data, request.existingWorkspaces, language, batchOptions);
       return { sourceTabIds, response };
     }, abortBatches);
+    if (batchController.signal.aborted) throw new AIAbortError();
   } finally {
     request.signal?.removeEventListener("abort", abortBatches);
   }

@@ -230,8 +230,6 @@ describe("OrganizationDialog selection", () => {
       />
     ));
 
-    const firstHeading = host.querySelectorAll<HTMLButtonElement>(".preview-group-heading")[0];
-    await act(async () => firstHeading.click());
     const assignment = host.querySelector<HTMLSelectElement>(".preview-tab-row select")!;
     await act(async () => {
       assignment.value = "group-2";
@@ -239,13 +237,75 @@ describe("OrganizationDialog selection", () => {
     });
 
     expect(host.querySelectorAll(".preview-group")).toHaveLength(1);
-    expect(host.textContent).not.toContain("Music group");
+    const remainingNameInput = host.querySelector<HTMLInputElement>(".preview-group-name-input");
+    expect(remainingNameInput?.value).toBe("Search group");
     const confirm = [...host.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent?.includes("确认并应用"));
     await act(async () => confirm?.click());
     const confirmed = onConfirm.mock.calls[0][0];
     expect(confirmed.groups).toHaveLength(1);
     expect(confirmed.groups[0]).toMatchObject({ id: "group-2", tabIds: ["tab-2", "tab-1"] });
+    await act(async () => root.unmount());
+  });
+
+  it("expands preview groups by default, supports renaming and creating a custom group, and closes on Escape", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const onConfirm = vi.fn(async () => undefined);
+    const onClose = vi.fn();
+    const preview = {
+      mode: "purpose" as const,
+      sourceTabIds: ["tab-1"],
+      sourceFingerprint: "fixture-fingerprint",
+      groups: [
+        { id: "group-1", name: "Music group", description: "", tags: [], icon: "music" as const, color: "purple", existingWorkspaceId: null, tabIds: ["tab-1"] }
+      ],
+      unclassifiedTabIds: []
+    };
+
+    await act(async () => root.render(
+      <OrganizationDialog
+        open
+        tabs={groupedTabs}
+        mode="purpose"
+        preview={preview}
+        loading={false}
+        applying={false}
+        error={null}
+        onModeChange={vi.fn()}
+        onGenerate={vi.fn(async () => undefined)}
+        onConfirm={onConfirm}
+        onClose={onClose}
+      />
+    ));
+
+    // Groups are expanded by default
+    expect(host.querySelectorAll(".preview-tab-row")).toHaveLength(1);
+
+    // Rename AI-suggested group directly in preview
+    const nameInput = host.querySelector<HTMLInputElement>(".preview-group-name-input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(nameInput, "Audio Lounge");
+      nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    // Add a custom group and reassign the tab into it
+    const addGroup = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("新建分组"))!;
+    await act(async () => addGroup.click());
+    expect(host.querySelectorAll(".preview-group")).toHaveLength(2);
+
+    const confirm = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("确认并应用"))!;
+    await act(async () => confirm.click());
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      groups: [expect.objectContaining({ id: "group-1", name: "Audio Lounge", tabIds: ["tab-1"] })]
+    }));
+
+    // Escape closes the modal
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
     await act(async () => root.unmount());
   });
 

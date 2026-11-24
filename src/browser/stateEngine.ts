@@ -7,11 +7,8 @@ import type {
 } from "../shared/contracts";
 import type { BackgroundRequest, BrowserStateResponse, MoveTabsResponse } from "../shared/messages";
 import {
-  createWindowKey,
-  createWorkspaceId,
   nativeGroupId,
   normalizeGroupColor,
-  specialPageReason,
   STORAGE_DEBOUNCE_MS
 } from "../shared/constants";
 import {
@@ -23,11 +20,11 @@ import {
   type StateSnapshot
 } from "../shared/backup";
 import { addBrowserListener, getBrowserApi, invokeBrowser, type BrowserEvent, type BrowserLike } from "./api";
-import { browserTabGroupId, classifyBrowserTab } from "./classify";
+import { browserTabGroupId, classifyBrowserTab, type BrowserTabLike } from "./classify";
+import { compareTab, compareWindow, compareWorkspace, reconcileBrowserSnapshot, snapshotsEqual } from "./reconciler";
 import { DebouncedSaver } from "../storage/debouncedSaver";
 import { DexieStateRepository, type StateRepository } from "../storage/repository";
-import { loadAIConfig } from "../ai/config";
-import { organizeTabs } from "../ai/pipeline";
+import { AIAbortError, AIConfigError } from "../ai/errors";
 import { fingerprintTabs } from "../ai/snapshot";
 import { isWorkspaceClosableTab, organizationPreviewSchema, workspaceMergePreviewSchema } from "../shared/contracts";
 import { getAppLanguage, translate } from "../i18n";
@@ -78,21 +75,20 @@ export interface UiActionRequest {
 interface NativeWindowLike {
   id?: number;
   type?: string;
+  incognito?: boolean;
   focused?: boolean;
   tabs?: NativeTabLike[];
 }
 
-interface NativeTabLike {
-  id?: number;
-  windowId?: number;
-  groupId?: number;
-  index?: number;
-  pinned?: boolean;
-  active?: boolean;
-  url?: string;
-  title?: string;
-  favIconUrl?: string;
+type ManagedNativeWindow = NativeWindowLike & { id: number };
+
+interface NativeTabLike extends BrowserTabLike {
+  incognito?: boolean;
 }
+
+type NativeTabChangeInfo = Pick<BrowserTabLike, "title" | "url" | "favIconUrl" | "pinned" | "groupId"> & {
+  status?: string;
+};
 
 interface NativeGroupLike {
   id?: number;
@@ -102,9 +98,19 @@ interface NativeGroupLike {
   collapsed?: boolean;
 }
 
+type NativeGroup = NativeGroupLike & { id: number };
+
+interface NativeRollbackScope {
+  tabIds: readonly string[];
+  createdWorkspaces: Set<string>;
+  createdGroups: Map<number, string>;
+}
+
 type StateListener = (state: StateSnapshot) => void;
 
 const EMPTY_STATE: StateSnapshot = { windows: [], workspaces: [], tabs: [] };
+const ORGANIZATION_ATTEMPT_TIMEOUT_MS = 28_000;
+const ORGANIZATION_BUDGET_MS = 56_000;
 
 function tr(key: Parameters<typeof translate>[1], variables?: Record<string, string | number | undefined>): string {
   return translate(getAppLanguage(), key, variables);
@@ -145,11 +151,12 @@ export class BrowserStateEngine {
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
-    this.state = normalizeSnapshot(await this.repository.load());
-    this.notify();
     if (this.api) {
-      await this.syncFromBrowser();
+      await this.reconcileFromBrowser(true);
       this.registerBrowserEvents();
+    } else {
+      this.state = normalizeSnapshot(await this.repository.load());
+      this.notify();
     }
   }
 
@@ -182,6 +189,10 @@ export class BrowserStateEngine {
 
   /** Full reconciliation used at startup and after browser event bursts. */
   async syncFromBrowser(): Promise<BrowserStateResponse> {
+    return this.reconcileFromBrowser();
+  }
+
+  private async reconcileFromBrowser(restore = false): Promise<BrowserStateResponse> {
     if (!this.api) return this.getState();
     if (this.syncPromise) {
       this.syncAgain = true;
@@ -190,9 +201,11 @@ export class BrowserStateEngine {
     }
 
     const sync = (async () => {
+      let persisted = restore ? normalizeSnapshot(await this.repository.load()) : undefined;
       do {
         this.syncAgain = false;
-        await this.performSync();
+        await this.performSync(persisted);
+        persisted = undefined;
       } while (this.syncAgain);
     })();
     this.syncPromise = sync;
@@ -205,6 +218,13 @@ export class BrowserStateEngine {
   }
 
   async createWorkspace(input: WorkspaceInput): Promise<Workspace> {
+    const workspace = await this.addWorkspace(input);
+    if (this.api) await this.syncFromBrowser();
+    await this.saver.flush();
+    return this.state.workspaces.find((item) => item.id === workspace.id) ?? workspace;
+  }
+
+  private async addWorkspace(input: WorkspaceInput): Promise<Workspace> {
     const targetWindow = this.resolveTargetWindow(input.windowId, input.windowKey);
     if (!targetWindow) throw new Error(tr("error.targetWindowRequired"));
     const name = input.name.trim();
@@ -255,34 +275,41 @@ export class BrowserStateEngine {
     this.state.workspaces.push(workspace);
     this.state.workspaces.sort(compareWorkspace);
     this.markChanged();
-    if (this.api) await this.syncFromBrowser();
-    return this.state.workspaces.find((item) => item.id === workspace.id) ?? workspace;
+    return workspace;
   }
 
   async updateWorkspace(workspaceId: string, patch: WorkspacePatch): Promise<Workspace> {
     const workspace = this.state.workspaces.find((item) => item.id === workspaceId);
     if (!workspace) throw new Error(tr("error.workspaceNotFound"));
-    const nextName = patch.name === undefined ? workspace.name : patch.name.trim();
+    const { name, color, icon, tags, ...metadata } = patch;
+    const nextName = name === undefined ? workspace.name : name.trim();
     if (!nextName) throw new Error(tr("error.workspaceNameEmpty"));
+    const nextColor = color === undefined ? workspace.color : normalizeGroupColor(color);
+    const nameChanged = nextName !== workspace.name;
+    const colorChanged = nextColor !== workspace.color;
 
-    if (this.api && workspace.groupId !== undefined && this.api.tabGroups?.update) {
+    if ((nameChanged || colorChanged) && this.api && workspace.groupId !== undefined && this.api.tabGroups?.update) {
       await invokeBrowser(this.api.tabGroups, "update", workspace.groupId, {
-        title: nextName,
-        color: normalizeGroupColor(patch.color ?? workspace.color)
+        ...(nameChanged ? { title: nextName } : {}),
+        ...(colorChanged ? { color: nextColor } : {})
       });
+      await this.syncPromise?.catch(() => undefined);
     }
 
-    Object.assign(workspace, {
-      ...patch,
-      name: nextName,
-      color: normalizeGroupColor(patch.color ?? workspace.color),
-      icon: normalizeWorkspaceIcon(patch.icon ?? workspace.icon),
-      tags: patch.tags ? [...patch.tags] : workspace.tags,
+    const latest = this.state.workspaces.find((item) => item.id === workspaceId);
+    if (!latest) throw new Error(tr("error.workspaceNotFound"));
+    Object.assign(latest, {
+      ...metadata,
+      ...(nameChanged ? { name: nextName } : {}),
+      ...(colorChanged ? { color: nextColor } : {}),
+      ...(icon === undefined ? {} : { icon: normalizeWorkspaceIcon(icon) }),
+      ...(tags === undefined ? {} : { tags: [...tags] }),
       updatedAt: this.now()
     });
     this.state.workspaces.sort(compareWorkspace);
     this.markChanged();
-    return { ...workspace, tags: [...workspace.tags] };
+    await this.saver.flush();
+    return { ...latest, tags: [...latest.tags] };
   }
 
   async deleteWorkspace(workspaceId: string, closeTabs = false): Promise<void> {
@@ -291,11 +318,14 @@ export class BrowserStateEngine {
     const tabIds = this.state.tabs
       .filter((tab) => isWorkspaceClosableTab(tab, workspaceId))
       .map((tab) => tab.id);
-    if (this.api && tabIds.length > 0) {
+    let closedNativeIds: number[] | undefined;
+    if (this.api) {
       if (closeTabs) {
-        const nativeIds = tabIds.map((id) => this.toNativeId(id)).filter((id): id is number => id !== undefined);
         try {
-          if (nativeIds.length) await invokeBrowser(this.api.tabs, "remove", nativeIds);
+          closedNativeIds = workspace.groupId === undefined
+            ? tabIds.map((id) => this.toNativeId(id)).filter((id): id is number => id !== undefined)
+            : await this.getClosableNativeGroupTabIds(workspace.windowKey, workspace.groupId);
+          if (closedNativeIds.length) await invokeBrowser(this.api.tabs, "remove", closedNativeIds);
         } catch (error) {
           await this.syncFromBrowser();
           throw error;
@@ -304,8 +334,11 @@ export class BrowserStateEngine {
     }
     this.state.workspaces = this.state.workspaces.filter((item) => item.id !== workspaceId);
     if (closeTabs) this.state.tabs = this.state.tabs.flatMap((tab) => {
+      if (closedNativeIds?.includes(Number(tab.id))) return [];
       if (tab.workspaceId !== workspaceId) return [tab];
-      return isWorkspaceClosableTab(tab, workspaceId) ? [] : [{ ...tab, workspaceId: null }];
+      return closedNativeIds === undefined && isWorkspaceClosableTab(tab, workspaceId)
+        ? []
+        : [{ ...tab, workspaceId: null }];
     });
     else for (const tab of this.state.tabs) if (tab.workspaceId === workspaceId) tab.workspaceId = null;
     this.markChanged();
@@ -313,6 +346,7 @@ export class BrowserStateEngine {
       if (closeTabs) await this.closeEmptyWindowsAfterMutation();
       await this.syncFromBrowser();
     }
+    await this.saver.flush();
   }
 
   async ungroupTabs(tabIds: string[]): Promise<BrowserStateResponse> {
@@ -369,6 +403,7 @@ export class BrowserStateEngine {
       await this.closeEmptyWindowsAfterMutation();
       await this.syncFromBrowser();
     }
+    await this.saver.flush();
     const skippedTabIds = requested.filter((id) => !movedTabIds.includes(id));
     return { ...this.getState(), movedTabIds, skippedTabIds };
   }
@@ -377,6 +412,45 @@ export class BrowserStateEngine {
     const closedWindowIds = await this.closeEmptyNativeWindows();
     if (closedWindowIds.length > 0) await this.syncFromBrowser();
     return { closedWindowIds };
+  }
+
+  async closeTabs(tabIds: string[]): Promise<{ closedTabIds: string[]; skippedTabIds: string[] }> {
+    const requested = [...new Set(tabIds)];
+    const closedTabIds: string[] = [];
+    const skippedTabIds: string[] = [];
+    if (!this.api) return { closedTabIds, skippedTabIds: requested };
+
+    const nativeTabIds: number[] = [];
+    for (const tabId of requested) {
+      const tab = this.state.tabs.find((item) => item.id === tabId);
+      const nativeId = this.toNativeId(tabId);
+      if (tab && tab.kind !== "special" && nativeId !== undefined) {
+        nativeTabIds.push(nativeId);
+        closedTabIds.push(tabId);
+      } else {
+        skippedTabIds.push(tabId);
+      }
+    }
+    if (nativeTabIds.length > 0) {
+      await invokeBrowser(this.api.tabs, "remove", nativeTabIds);
+      await this.closeEmptyWindowsAfterMutation();
+      await this.syncFromBrowser();
+      await this.saver.flush();
+    }
+    return { closedTabIds, skippedTabIds };
+  }
+
+  async setTabPinned(tabId: string, pinned: boolean): Promise<void> {
+    const tab = this.state.tabs.find((item) => item.id === tabId);
+    const nativeId = this.toNativeId(tabId);
+    if (!tab || nativeId === undefined) throw new Error(tr("error.tabMissing"));
+    if (tab.kind === "special") return;
+    if (!this.api) throw new Error(tr("browser.unavailable"));
+
+    if (pinned && tab.groupId !== undefined) await this.ungroupNativeTabs([tabId]);
+    await invokeBrowser(this.api.tabs, "update", nativeId, { pinned });
+    await this.syncFromBrowser();
+    await this.saver.flush();
   }
 
   async activateTab(tabId: string): Promise<void> {
@@ -433,14 +507,13 @@ export class BrowserStateEngine {
         await invokeBrowser(this.api.tabGroups, "move", source.groupId, {
           index: adjustedIndex ?? -1
         });
-        await this.syncFromBrowser();
-        return;
       } catch {
         // Native order is authoritative. Reconcile instead of leaving an
         // optimistic local order that the browser rejected.
-        await this.syncFromBrowser();
-        return;
       }
+      await this.syncFromBrowser();
+      await this.saver.flush();
+      return;
     }
 
     siblings.splice(insertAt, 0, source);
@@ -449,6 +522,7 @@ export class BrowserStateEngine {
       workspace.updatedAt = this.now();
     });
     this.markChanged();
+    await this.saver.flush();
   }
 
   createWorkspaceMergePreview(sourceWorkspaceId: string, targetWorkspaceId: string): WorkspaceMergePreview {
@@ -473,8 +547,9 @@ export class BrowserStateEngine {
       || fingerprintWorkspace(source) !== preview.sourceWorkspaceFingerprint
       || fingerprintWorkspace(target) !== preview.targetWorkspaceFingerprint;
     const sourceTabs = this.state.tabs.filter((tab) => tab.workspaceId === source.id && tab.kind !== "special");
+    const sourceTabIds = sourceTabs.map((tab) => tab.id);
     const expectedIds = [...preview.sourceTabIds].sort();
-    const currentIds = sourceTabs.map((tab) => tab.id).sort();
+    const currentIds = [...sourceTabIds].sort();
     if (workspaceChanged
       || expectedIds.length !== currentIds.length
       || expectedIds.some((id, index) => id !== currentIds[index])
@@ -483,9 +558,12 @@ export class BrowserStateEngine {
     }
 
     const beforeState = this.getState();
+    const rollback: NativeRollbackScope = {
+      tabIds: sourceTabIds, createdWorkspaces: new Set(), createdGroups: new Map()
+    };
     try {
       const moved = sourceTabs.length
-        ? await this.moveTabsToWorkspace(sourceTabs.map((tab) => tab.id), target.id, true)
+        ? await this.moveTabsToWorkspace(sourceTabIds, target.id, rollback)
         : [];
       if (moved.length !== sourceTabs.length) throw new Error(tr("error.mergeMoveIncomplete"));
       this.state.workspaces = this.state.workspaces.filter((workspace) => workspace.id !== source.id);
@@ -495,9 +573,10 @@ export class BrowserStateEngine {
         await this.syncFromBrowser();
       }
     } catch (error) {
-      await this.rollbackNativeState(beforeState);
+      await this.rollbackNativeState(beforeState, rollback);
       throw error;
     }
+    await this.saver.flush();
   }
 
   async exportBackup(asJson = false): Promise<ReturnType<typeof createBackup> | string> {
@@ -525,16 +604,11 @@ export class BrowserStateEngine {
         usedNames.add(candidate);
         return candidate;
       };
-      const importedGroups: Array<{
+      const importedWorkspaces: Array<{
         nativeWindowId: number;
-        sourceWindowKey: string;
-        sourceWorkspaceId: string;
+        source: Workspace;
         name: string;
-        description: string;
-        tags: string[];
-        color: string;
-        order: number;
-        groupId: number;
+        groupId?: number;
       }> = [];
       const importedWindows: Array<{ source: WindowState; nativeId: number }> = [];
 
@@ -548,12 +622,13 @@ export class BrowserStateEngine {
         const urls = sourceTabs.map((tab) => tab.url || "about:blank");
         const created = await invokeBrowser<NativeWindowLike>(this.api.windows, "create", {
           url: urls.length ? urls : ["about:blank"],
-          focused: false
+          focused: false,
+          incognito: false
         });
-        if (!created?.id) continue;
+        if (!isManagedNativeWindow(created)) continue;
         createdNativeWindowIds.push(created.id);
         importedWindows.push({ source: sourceWindow, nativeId: created.id });
-        const nativeTabs = (Array.isArray(created.tabs) ? created.tabs : await this.getNativeTabs(created.id))
+        const nativeTabs = (await this.getNativeTabs(created))
           .filter((tab) => tab.id !== undefined)
           .sort((left, right) => (left.index ?? 0) - (right.index ?? 0));
         const tabMap = new Map<string, number>();
@@ -582,7 +657,9 @@ export class BrowserStateEngine {
               url: sourceTab.url,
               active: false
             });
-            if (restored?.id === undefined) throw new Error(tr("backup.specialRestoreFailed"));
+            if (restored?.id === undefined || !isTabInNativeWindow(restored, created.id)) {
+              throw new Error(tr("backup.specialRestoreFailed"));
+            }
             restoredSpecialTabs += 1;
             if (typeof this.api.tabs.discard === "function") {
               try { await invokeBrowser(this.api.tabs, "discard", restored.id); } catch { /* best effort lazy restore */ }
@@ -609,27 +686,24 @@ export class BrowserStateEngine {
           const nativeIds = backup.tabs
             .filter((tab) => tab.workspaceId === sourceWorkspace.id && tabMap.has(tab.id))
             .map((tab) => tabMap.get(tab.id) as number);
-          if (!nativeIds.length) continue;
-          const groupId = await invokeBrowser<number>(this.api.tabs, "group", {
-            tabIds: nativeIds,
-            createProperties: { windowId: created.id }
-          });
           const name = uniqueName(sourceWorkspace.name);
-          try {
-            await invokeBrowser(this.api.tabGroups, "update", groupId, {
-              title: name,
-              color: normalizeGroupColor(sourceWorkspace.color)
+          let groupId: number | undefined;
+          if (nativeIds.length) {
+            groupId = await invokeBrowser<number>(this.api.tabs, "group", {
+              tabIds: nativeIds,
+              createProperties: { windowId: created.id }
             });
-          } catch { /* group metadata is restored during reconciliation */ }
-          importedGroups.push({
+            try {
+              await invokeBrowser(this.api.tabGroups, "update", groupId, {
+                title: name,
+                color: normalizeGroupColor(sourceWorkspace.color)
+              });
+            } catch { /* group metadata is restored during reconciliation */ }
+          }
+          importedWorkspaces.push({
             nativeWindowId: created.id,
-            sourceWindowKey: sourceWindow.key,
-            sourceWorkspaceId: sourceWorkspace.id,
+            source: sourceWorkspace,
             name,
-            description: sourceWorkspace.description,
-            tags: [...sourceWorkspace.tags],
-            color: normalizeGroupColor(sourceWorkspace.color),
-            order: sourceWorkspace.order,
             groupId
           });
         }
@@ -640,20 +714,29 @@ export class BrowserStateEngine {
         const targetWindow = this.state.windows.find((window) => window.nativeId === importedWindow.nativeId);
         if (targetWindow) targetWindow.name = importedWindow.source.name;
       }
-      for (const importedGroup of importedGroups) {
-        const targetWindow = this.state.windows.find((window) => window.nativeId === importedGroup.nativeWindowId);
-        const targetWorkspace = targetWindow
-          ? this.state.workspaces.find((workspace) => workspace.windowKey === targetWindow.key && workspace.groupId === importedGroup.groupId)
-          : undefined;
-        if (targetWorkspace) {
-          Object.assign(targetWorkspace, {
-            name: importedGroup.name,
-            description: importedGroup.description,
-            tags: [...importedGroup.tags],
-            color: importedGroup.color,
-            order: importedGroup.order,
-            updatedAt: this.now()
+      for (const { nativeWindowId, source, name, groupId } of importedWorkspaces) {
+        const targetWindow = this.state.windows.find((window) => window.nativeId === nativeWindowId);
+        if (!targetWindow) continue;
+        const metadata = {
+          name,
+          description: source.description,
+          tags: [...source.tags],
+          color: normalizeGroupColor(source.color),
+          icon: normalizeWorkspaceIcon(source.icon),
+          order: source.order,
+          updatedAt: this.now()
+        };
+        if (groupId === undefined) {
+          this.state.workspaces.push({
+            ...metadata,
+            id: this.newLocalWorkspaceId(targetWindow.key),
+            windowKey: targetWindow.key,
+            createdAt: source.createdAt
           });
+        } else {
+          const targetWorkspace = this.state.workspaces.find((workspace) =>
+            workspace.windowKey === targetWindow.key && workspace.groupId === groupId);
+          if (targetWorkspace) Object.assign(targetWorkspace, metadata);
         }
       }
       this.markChanged();
@@ -749,23 +832,24 @@ export class BrowserStateEngine {
         result = await this.mergeWorkspaces(payload.preview);
         break;
       case "tabs.move":
-        result = await this.moveTabs({
-          tabIds: Array.isArray(payload.tabIds) ? payload.tabIds.map(String) : [],
-          workspaceId: payload.workspaceId === undefined ? null : payload.workspaceId,
-          windowKey: typeof payload.windowKey === "string" ? payload.windowKey : undefined
-        });
-        break;
       case "tab.move":
         result = await this.moveTabs({
-          tabIds: [String(payload.tabId)],
-          workspaceId: payload.workspaceId === undefined ? null : payload.workspaceId
+          tabIds: request.action === "tab.move"
+            ? [String(payload.tabId)]
+            : Array.isArray(payload.tabIds) ? payload.tabIds.map(String) : [],
+          workspaceId: payload.workspaceId,
+          windowKey: typeof payload.windowKey === "string" && payload.windowKey ? payload.windowKey : undefined
         });
         break;
       case "tab.activate":
         result = await this.activateTab(String(payload.tabId));
         break;
-      // Organization is intentionally owned by the AI/provider layer. An
-      // undefined response lets the UI adapter use its local preview fallback.
+      case "tab.close":
+        result = await this.closeTabs(Array.isArray(payload.tabIds) ? payload.tabIds.map(String) : []);
+        break;
+      case "tab.pin":
+        result = await this.setTabPinned(String(payload.tabId), payload.pinned === true);
+        break;
       case "organization.preview":
         return this.organizationPreview(payload);
       case "organization.cancel":
@@ -785,6 +869,7 @@ export class BrowserStateEngine {
   }
 
   private async organizationPreview(payload: Record<string, unknown>): Promise<unknown> {
+    const deadlineAt = Date.now() + ORGANIZATION_BUDGET_MS;
     const mode = payload.mode === "type" ? "type" : "purpose";
     const configuredIds = Array.isArray(payload.tabIds)
       ? payload.tabIds.filter((id): id is string => typeof id === "string")
@@ -794,8 +879,6 @@ export class BrowserStateEngine {
       && (configuredIds.length ? configuredIds.includes(tab.id) : (tab.workspaceId === null && !tab.pinned))
     );
     if (!eligible.length) throw new Error(tr("error.noOrganizableTabs"));
-    const config = await loadAIConfig();
-    if (!config.apiKey || !config.model) throw new Error(tr("error.configureAIManage"));
     const requestId = typeof payload.requestId === "string" && payload.requestId ? payload.requestId : undefined;
     const controller = new AbortController();
     if (requestId) {
@@ -803,15 +886,26 @@ export class BrowserStateEngine {
       this.organizationControllers.set(requestId, controller);
     }
     try {
+      const [{ loadAIConfig }, { organizeTabs }] = await Promise.all([
+        import("../ai/config"),
+        import("../ai/pipeline")
+      ]);
+      const config = await loadAIConfig();
+      if (controller.signal.aborted) throw new AIAbortError();
+      if (typeof payload.expectedOrigin === "string" && payload.expectedOrigin !== new URL(config.baseUrl).origin) {
+        throw new AIConfigError(tr("ai.invalidConfig"));
+      }
+      if (!config.apiKey || !config.model) throw new Error(tr("error.configureAIManage"));
       const preview = await organizeTabs({
         tabs: eligible,
         mode,
         config,
-        clientOptions: { retry: { timeoutMs: 28_000, maxRetries: 1 } },
+        clientOptions: { retry: { timeoutMs: ORGANIZATION_ATTEMPT_TIMEOUT_MS, maxRetries: 1 } },
         existingWorkspaces: this.state.workspaces,
         language: getAppLanguage(),
         getCurrentTabs: () => this.state.tabs.filter((tab) => eligible.some((item) => item.id === tab.id)),
-        signal: controller.signal
+        signal: controller.signal,
+        deadlineAt
       });
       const targetWindowKey = this.state.windows.find((window) => window.isCurrent)?.key ?? this.state.windows[0]?.key;
       const existingColors = this.state.workspaces
@@ -880,6 +974,9 @@ export class BrowserStateEngine {
         throw new Error(tr("error.aiUnknownWorkspace", { id: group.existingWorkspaceId }));
       }
     }
+    const rollback: NativeRollbackScope = {
+      tabIds: parsed.sourceTabIds, createdWorkspaces: new Set(), createdGroups: new Map()
+    };
     try {
       const workspaceByGroup = new Map<string, string>();
       for (const group of nonEmptyGroups) {
@@ -887,7 +984,7 @@ export class BrowserStateEngine {
         if (!workspaceId) {
           // Cross-window selections intentionally consolidate into the window
           // currently being operated from, as defined by the product contract.
-          const created = await this.createWorkspace({
+          const created = await this.addWorkspace({
             windowKey: targetWindowKey,
             name: group.name,
             description: group.description,
@@ -896,13 +993,14 @@ export class BrowserStateEngine {
             icon: group.icon
           });
           workspaceId = created.id;
+          rollback.createdWorkspaces.add(workspaceId);
         }
         workspaceByGroup.set(group.id, workspaceId);
       }
       for (const group of nonEmptyGroups) {
         const workspaceId = workspaceByGroup.get(group.id);
         if (!workspaceId) throw new Error(tr("error.aiMissingTarget"));
-        await this.moveTabsToWorkspace(group.tabIds, workspaceId, true);
+        await this.moveTabsToWorkspace(group.tabIds, workspaceId, rollback);
       }
       if (parsed.unclassifiedTabIds.length) {
         await this.moveTabsToUnclassified(parsed.unclassifiedTabIds, this.resolveTargetWindow(undefined, targetWindowKey)?.nativeId, targetWindowKey, true);
@@ -916,198 +1014,175 @@ export class BrowserStateEngine {
       }
       await this.closeEmptyWindowsAfterMutation();
       await this.syncFromBrowser();
-      return this.getState();
     } catch (error) {
-      await this.rollbackNativeState(beforeState);
+      await this.rollbackNativeState(beforeState, rollback);
       throw error;
     }
+    await this.saver.flush();
+    return this.getState();
   }
 
-  private async rollbackNativeState(before: StateSnapshot): Promise<void> {
-    if (!this.api) {
-      this.state = normalizeSnapshot(before);
-      this.notify();
+  private async rollbackNativeState(before: StateSnapshot, scope: NativeRollbackScope): Promise<void> {
+    const api = this.api;
+    if (!api) {
+      this.replaceState(before);
+      await this.saver.flush();
       return;
     }
+    let workspacesChanged = false;
     try {
-      const groups = new Map<number, string[]>();
-      for (const tab of before.tabs.filter((item) => item.kind !== "special")) {
+      const { windows } = await this.getNativeWindows();
+      const nativeTabs = new Map<number, { tab: NativeTabLike; windowId: number }>();
+      const tabOrder = new Map<number, number[]>();
+      const occupiedGroupIds = new Set<number>();
+      for (const window of windows) {
+        const ids: number[] = [];
+        tabOrder.set(window.id, ids);
+        for (const tab of await this.getNativeTabs(window)) {
+          if (tab.id !== undefined) {
+            nativeTabs.set(tab.id, { tab, windowId: window.id });
+            ids.push(tab.id);
+          }
+          const groupId = browserTabGroupId(tab);
+          if (groupId !== undefined) occupiedGroupIds.add(groupId);
+        }
+      }
+
+      const selectedIds = new Set(scope.tabIds);
+      const groups = new Map<number, { tabIds: number[]; window: WindowState }>();
+      for (const tab of before.tabs) {
+        if (!selectedIds.has(tab.id) || tab.kind === "special") continue;
         const nativeId = this.toNativeId(tab.id);
         const targetWindow = before.windows.find((window) => window.key === tab.windowKey);
         if (nativeId === undefined || !targetWindow) continue;
-        await this.moveNativeTabToWindow(nativeId, targetWindow.nativeId);
-        if (tab.pinned) {
-          try { await invokeBrowser(this.api.tabs, "update", nativeId, { pinned: true }); } catch { /* best effort */ }
+        const current = nativeTabs.get(nativeId);
+        const originalOrder = tabOrder.get(targetWindow.nativeId);
+        const currentOrder = current && tabOrder.get(current.windowId);
+        if (!current || !currentOrder || !originalOrder) continue;
+        const currentIndex = currentOrder.indexOf(nativeId);
+        const moved = currentOrder !== originalOrder || currentIndex !== tab.index;
+        try {
+          if (moved) {
+            await this.moveNativeTabToWindow(nativeId, targetWindow.nativeId, tab.index);
+            currentOrder.splice(currentIndex, 1);
+            originalOrder.splice(tab.index, 0, nativeId);
+          }
+          if (tab.pinned !== (current.tab.pinned === true)) {
+            await invokeBrowser(api.tabs, "update", nativeId, { pinned: tab.pinned });
+          }
+        } catch {
+          continue;
         }
         if (tab.groupId !== undefined) {
-          const ids = groups.get(tab.groupId) ?? [];
-          ids.push(String(nativeId));
-          groups.set(tab.groupId, ids);
-        } else {
-          try { await invokeBrowser(this.api.tabs, "ungroup", [nativeId]); } catch { /* best effort */ }
+          if (moved || browserTabGroupId(current.tab) !== tab.groupId) {
+            const group = groups.get(tab.groupId) ?? { tabIds: [], window: targetWindow };
+            group.tabIds.push(nativeId);
+            groups.set(tab.groupId, group);
+          }
+        } else if (browserTabGroupId(current.tab) !== undefined) {
+          try { await invokeBrowser(api.tabs, "ungroup", [nativeId]); } catch { /* best effort */ }
         }
       }
-      for (const [groupId, ids] of groups) {
-        try {
-          await invokeBrowser(this.api.tabs, "group", { tabIds: ids.map(Number), groupId });
-        } catch {
-          const workspace = before.workspaces.find((item) => item.groupId === groupId);
-          const first = before.tabs.find((tab) => tab.groupId === groupId);
-          const targetWindow = first ? before.windows.find((window) => window.key === first.windowKey) : undefined;
-          if (workspace && targetWindow) {
+      for (const [groupId, { tabIds, window }] of groups) {
+        const workspace = before.workspaces.find((item) => item.groupId === groupId && item.windowKey === window.key);
+        let restoredGroupId = groupId;
+        let restored = false;
+        if (occupiedGroupIds.has(groupId)) {
+          try {
+            await invokeBrowser(api.tabs, "group", { tabIds, groupId });
+            restored = true;
+          } catch { /* The original group may have closed with its last tab. */ }
+        }
+        if (!restored) {
+          try {
+            restoredGroupId = await invokeBrowser<number>(api.tabs, "group", {
+              tabIds, createProperties: { windowId: window.nativeId }
+            });
+          } catch { continue; }
+          if (workspace && api.tabGroups?.update) {
             try {
-              const created = await invokeBrowser<number>(this.api.tabs, "group", { tabIds: ids.map(Number), createProperties: { windowId: targetWindow.nativeId } });
-              await invokeBrowser(this.api.tabGroups, "update", created, { title: workspace.name, color: normalizeGroupColor(workspace.color) });
+              await invokeBrowser(api.tabGroups, "update", restoredGroupId, {
+                title: workspace.name, color: normalizeGroupColor(workspace.color)
+              });
             } catch { /* best effort */ }
           }
         }
-      }
-      const originalGroupIds = new Set(before.workspaces.map((workspace) => workspace.groupId).filter((id): id is number => id !== undefined));
-      if (this.api.tabGroups?.query && this.api.tabGroups?.remove) {
-        try {
-          const currentGroups = await invokeBrowser<NativeGroupLike[]>(this.api.tabGroups, "query", {});
-          for (const group of currentGroups ?? []) {
-            const groupId = nativeGroupId(group.id);
-            if (groupId !== undefined && !originalGroupIds.has(groupId)) {
-              try { await invokeBrowser(this.api.tabGroups, "remove", groupId); } catch { /* best effort */ }
-            }
-          }
-        } catch { /* best effort */ }
+        if (!workspace) continue;
+        const latest = this.state.workspaces.find((item) => item.id === workspace.id);
+        if (latest?.groupId === restoredGroupId) continue;
+        if (latest) latest.groupId = restoredGroupId;
+        else this.state.workspaces.push({ ...workspace, groupId: restoredGroupId });
+        workspacesChanged = true;
       }
     } finally {
-      this.state = normalizeSnapshot(before);
+      const workspaces = this.state.workspaces.filter((workspace) =>
+        workspace.groupId !== undefined || !scope.createdWorkspaces.has(workspace.id));
+      workspacesChanged ||= workspaces.length !== this.state.workspaces.length;
+      this.state.workspaces = workspaces;
+      const stateBeforeSync = this.state;
+      await this.syncFromBrowser();
+      // Publish local workspace changes when reconciliation leaves the state in place.
+      if (workspacesChanged && this.state === stateBeforeSync) this.markChanged();
+      const restoredLocalIds = new Set<string>();
+      for (const [groupId, workspaceId] of scope.createdGroups) {
+        if (this.state.tabs.some((tab) => tab.groupId === groupId)) continue;
+        restoredLocalIds.add(workspaceId);
+        if (api.tabGroups?.remove) {
+          try { await invokeBrowser(api.tabGroups, "remove", groupId); } catch { /* Already removed with its last tab. */ }
+        }
+      }
+      for (const workspace of before.workspaces) {
+        if (workspace.groupId === undefined && restoredLocalIds.has(workspace.id)
+          && this.state.windows.some((window) => window.key === workspace.windowKey)
+          && !this.state.workspaces.some((item) => item.id === workspace.id)) {
+          this.state.workspaces.push(workspace);
+          this.markChanged();
+        }
+      }
       await this.saver.flush();
-      this.notify();
     }
   }
 
-  private async performSync(): Promise<void> {
+  private async performSync(persisted?: StateSnapshot): Promise<void> {
     if (!this.api) return;
-    const nativeWindows = await this.getNativeWindows();
-    let currentWindowId: number | undefined;
+    const { windows: nativeWindows, privateWindowIds } = await this.getNativeWindows();
+    let focusedWindow: NativeWindowLike | undefined;
     try {
-      const current = await invokeBrowser<NativeWindowLike>(this.api.windows, "getLastFocused", { populate: false });
-      currentWindowId = current?.id;
+      focusedWindow = await invokeBrowser<NativeWindowLike>(this.api.windows, "getLastFocused", { populate: false });
     } catch {
       try {
-        const current = await invokeBrowser<NativeWindowLike>(this.api.windows, "getCurrent");
-        currentWindowId = current?.id;
-      } catch {
-        currentWindowId = nativeWindows.find((window) => window.focused)?.id;
-      }
+        focusedWindow = await invokeBrowser<NativeWindowLike>(this.api.windows, "getCurrent");
+      } catch { /* Use the focus flag from the window list. */ }
     }
-
-    const existingWindows = this.state.windows;
-    const existingWorkspaces = this.state.workspaces;
-    const existingTabs = this.state.tabs;
-    const hasNativeWindowMatch = nativeWindows.some((nativeWindow) =>
-      nativeWindow.id !== undefined && existingWindows.some((window) => window.nativeId === nativeWindow.id)
-    );
-    const allowWindowOrderReconciliation = !hasNativeWindowMatch && existingWindows.length === nativeWindows.length;
-    const nextWindows: WindowState[] = [];
-    const nextWorkspaces: Workspace[] = [];
-    const nextTabs: TabRecord[] = [];
-
-    for (const [windowIndex, nativeWindow] of nativeWindows.entries()) {
-      const nativeWindowId = nativeWindow.id;
-      if (nativeWindowId === undefined) continue;
-      const candidateByNativeId = existingWindows.find((window) => window.nativeId === nativeWindowId);
-      const candidateByOrder = allowWindowOrderReconciliation ? existingWindows[windowIndex] : undefined;
-      const previousWindow = candidateByNativeId ?? candidateByOrder;
-      const windowKey = previousWindow?.key ?? createWindowKey(nativeWindowId);
-      nextWindows.push({
-        key: windowKey,
-        nativeId: nativeWindowId,
-        name: previousWindow?.name || `Window ${windowIndex + 1}`,
-        order: previousWindow?.order ?? windowIndex,
-        isCurrent: nativeWindowId === currentWindowId,
-        expanded: previousWindow?.expanded ?? false
-      });
-
-      const tabs = Array.isArray(nativeWindow.tabs)
-        ? nativeWindow.tabs
-        : await this.getNativeTabs(nativeWindowId);
-      const groups = await this.getNativeGroups(nativeWindowId, tabs);
-      const workspaceByGroup = new Map<number, Workspace>();
-      for (const [groupIndex, group] of groups.entries()) {
-        const groupId = nativeGroupId(group.id);
-        if (groupId === undefined) continue;
-        const previousWorkspace = existingWorkspaces.find(
-          (workspace) => workspace.windowKey === windowKey && workspace.groupId === groupId
-        ) ?? existingWorkspaces.find((workspace) =>
-          workspace.windowKey === windowKey
-          && workspace.name === (group.title?.trim() || "")
-          && workspace.color === normalizeGroupColor(group.color)
-        ) ?? existingWorkspaces.find((workspace) => workspace.windowKey === windowKey && workspace.order === groupIndex);
-        const workspace: Workspace = {
-          id: previousWorkspace?.id ?? createWorkspaceId(nativeWindowId, groupId),
-          windowKey,
-          name: previousWorkspace?.name || group.title?.trim() || tr("common.workspaceName", { count: groupIndex + 1 }),
-          description: previousWorkspace?.description ?? "",
-          tags: [...(previousWorkspace?.tags ?? [])],
-          color: normalizeGroupColor(group.color ?? previousWorkspace?.color),
-          icon: previousWorkspace?.icon
-            ? normalizeWorkspaceIcon(previousWorkspace.icon)
-            : inferWorkspaceIcon([group.title?.trim() ?? ""]),
-          groupId,
-          order: groupIndex,
-          createdAt: previousWorkspace?.createdAt ?? this.now(),
-          updatedAt: previousWorkspace?.updatedAt ?? this.now()
-        };
-        workspaceByGroup.set(groupId, workspace);
-        nextWorkspaces.push(workspace);
-      }
-
-      for (const [tabIndex, nativeTab] of tabs.entries()) {
-        const nativeTabId = nativeTab.id;
-        if (nativeTabId === undefined) continue;
-        const id = String(nativeTabId);
-        const previousTab = existingTabs.find((tab) => tab.id === id);
-        const kind = classifyBrowserTab(nativeTab);
-        const groupId = browserTabGroupId(nativeTab);
-        const workspace = kind === "normal" && groupId !== undefined ? workspaceByGroup.get(groupId) : undefined;
-        const isActive = nativeTab.active === true;
-        const becameActive = isActive && previousTab?.active !== true;
-        const lastActivatedAt = becameActive
-          ? this.now()
-          : previousTab?.lastActivatedAt ?? (isActive ? this.now() : undefined);
-        const record: TabRecord = {
-          id,
-          windowKey,
-          workspaceId: workspace?.id ?? null,
-          kind,
-          url: nativeTab.url ?? "",
-          index: Number.isInteger(nativeTab.index) && (nativeTab.index as number) >= 0
-            ? (nativeTab.index as number)
-            : tabIndex,
-          pinned: nativeTab.pinned === true,
-          active: isActive,
-          ...(nativeTab.title !== undefined ? { title: nativeTab.title } : {}),
-          ...(nativeTab.favIconUrl !== undefined ? { faviconUrl: nativeTab.favIconUrl } : {}),
-          ...(groupId !== undefined ? { groupId } : {}),
-          ...(lastActivatedAt !== undefined ? { lastActivatedAt } : {}),
-          ...(kind === "special" ? { specialReason: specialPageReason(nativeTab.url) } : {})
-        };
-        nextTabs.push(record);
-      }
+    if (focusedWindow?.incognito === true && focusedWindow.id !== undefined) {
+      privateWindowIds.add(focusedWindow.id);
     }
+    const currentWindowId = isManagedNativeWindow(focusedWindow) && nativeWindows.some((window) => window.id === focusedWindow.id)
+      ? focusedWindow.id
+      : nativeWindows.find((window) => window.focused)?.id;
 
-    // A workspace created before it contains any tabs has no native group yet.
-    // Keep that local workspace while its browser window is still open; once a
-    // group is created, subsequent reconciliations bind it to the native ID.
-    const openWindowKeys = new Set(nextWindows.map((window) => window.key));
-    for (const workspace of existingWorkspaces) {
-      if (workspace.groupId === undefined && openWindowKeys.has(workspace.windowKey)) {
-        if (!nextWorkspaces.some((item) => item.id === workspace.id)) {
-          nextWorkspaces.push({ ...workspace, tags: [...workspace.tags] });
-        }
-      }
-    }
+    const windows = await Promise.all(nativeWindows.map(async (nativeWindow) => {
+      const tabs = await this.getNativeTabs(nativeWindow);
+      const groups = await this.getNativeGroups(nativeWindow.id, tabs);
+      return { id: nativeWindow.id, tabs, groups };
+    }));
 
-    nextWindows.sort(compareWindow);
-    nextWorkspaces.sort(compareWorkspace);
-    nextTabs.sort(compareTab);
-    this.replaceState({ windows: nextWindows, workspaces: nextWorkspaces, tabs: nextTabs });
+    const previous = this.state;
+    const next = reconcileBrowserSnapshot({
+      previous: persisted ?? previous,
+      windows,
+      privateWindowIds,
+      currentWindowId,
+      restoring: persisted !== undefined,
+      now: this.now(),
+      language: getAppLanguage()
+    });
+    const changed = !snapshotsEqual(previous, next);
+    const needsSave = persisted ? !snapshotsEqual(persisted, next) : changed;
+    if (!changed && !needsSave) return;
+    this.state = next;
+    this.notify();
+    if (needsSave) this.saver.schedule();
   }
 
   private registerBrowserEvents(): void {
@@ -1128,7 +1203,12 @@ export class BrowserStateEngine {
       this.scheduleEmptyWindowCleanup();
       schedule();
     }));
-    this.removeListeners.push(addBrowserListener(tabs.onUpdated as BrowserEvent | undefined, schedule));
+    this.removeListeners.push(addBrowserListener(tabs.onUpdated as BrowserEvent | undefined, (_tabId: number, changeInfo?: NativeTabChangeInfo) => {
+      if (changeInfo == null || "title" in changeInfo || "url" in changeInfo || "favIconUrl" in changeInfo
+        || "pinned" in changeInfo || "groupId" in changeInfo || changeInfo.status === "complete") {
+        schedule();
+      }
+    }));
     this.removeListeners.push(addBrowserListener(tabs.onMoved as BrowserEvent | undefined, schedule));
     this.removeListeners.push(addBrowserListener(tabs.onAttached as BrowserEvent | undefined, () => {
       this.scheduleEmptyWindowCleanup();
@@ -1181,11 +1261,10 @@ export class BrowserStateEngine {
 
   private async closeEmptyNativeWindows(): Promise<number[]> {
     if (!this.api) return [];
-    const windows = await this.getNativeWindows();
+    const { windows } = await this.getNativeWindows();
     const closedWindowIds: number[] = [];
     for (const window of windows) {
-      if (window.id === undefined || (window.type && window.type !== "normal")) continue;
-      if (Array.isArray(window.tabs) && window.tabs.length > 0) continue;
+      if ((await this.getNativeTabs(window)).length > 0) continue;
       try {
         await invokeBrowser(this.api.windows, "remove", window.id);
         closedWindowIds.push(window.id);
@@ -1197,21 +1276,35 @@ export class BrowserStateEngine {
     return closedWindowIds;
   }
 
-  private async getNativeWindows(): Promise<NativeWindowLike[]> {
-    if (!this.api) return [];
-    const windows = await invokeBrowser<NativeWindowLike[]>(this.api.windows, "getAll", { populate: true });
-    return Array.isArray(windows)
-      ? windows.filter((window) => window.id !== undefined && (!window.type || window.type === "normal"))
+  private async getClosableNativeGroupTabIds(windowKey: string, groupId: number): Promise<number[]> {
+    const nativeWindowId = this.state.windows.find((window) => window.key === windowKey)?.nativeId;
+    const { windows } = await this.getNativeWindows();
+    const window = windows.find((item) => item.id === nativeWindowId);
+    if (!window) return [];
+    const tabs = await this.getNativeTabs(window);
+    return tabs.flatMap((tab) => tab.id !== undefined && browserTabGroupId(tab) === groupId
+      && classifyBrowserTab(tab) !== "special" ? [tab.id] : []);
+  }
+
+  private async getNativeWindows(): Promise<{ windows: ManagedNativeWindow[]; privateWindowIds: Set<number> }> {
+    const windows = this.api
+      ? await invokeBrowser<NativeWindowLike[]>(this.api.windows, "getAll", { populate: true })
       : [];
+    const entries = Array.isArray(windows) ? windows : [];
+    return {
+      windows: entries.filter(isManagedNativeWindow),
+      privateWindowIds: new Set(entries.flatMap((window) => window.incognito === true && window.id !== undefined ? [window.id] : []))
+    };
   }
 
-  private async getNativeTabs(windowId: number): Promise<NativeTabLike[]> {
-    if (!this.api) return [];
-    const tabs = await invokeBrowser<NativeTabLike[]>(this.api.tabs, "query", { windowId });
-    return Array.isArray(tabs) ? tabs : [];
+  private async getNativeTabs(window: ManagedNativeWindow): Promise<NativeTabLike[]> {
+    const tabs = window.tabs ?? (this.api
+      ? await invokeBrowser<NativeTabLike[]>(this.api.tabs, "query", { windowId: window.id })
+      : []);
+    return Array.isArray(tabs) ? tabs.filter((tab) => isTabInNativeWindow(tab, window.id)) : [];
   }
 
-  private async getNativeGroups(windowId: number, tabs: NativeTabLike[]): Promise<NativeGroupLike[]> {
+  private async getNativeGroups(windowId: number, tabs: NativeTabLike[]): Promise<NativeGroup[]> {
     const occupiedGroupIds = new Set<number>();
     const firstTabIndex = new Map<number, number>();
     for (const tab of tabs) {
@@ -1232,12 +1325,14 @@ export class BrowserStateEngine {
           // tabGroups.query can briefly retain a group after its final tab was
           // moved. Only groups backed by the current tab snapshot are real
           // workspaces; otherwise synchronization recreates a ghost workspace.
-          return groups
-            .filter((group) => {
-              const groupId = nativeGroupId(group.id);
-              return groupId !== undefined && occupiedGroupIds.has(groupId);
-            })
-            .sort((left, right) => compareGroupPosition(left.id as number, right.id as number));
+          const groupsById = new Map<number, NativeGroup>();
+          for (const group of groups) {
+            const id = nativeGroupId(group.id);
+            if (group.windowId === windowId && id !== undefined && occupiedGroupIds.has(id)) {
+              groupsById.set(id, { ...group, id });
+            }
+          }
+          return [...groupsById.values()].sort((left, right) => compareGroupPosition(left.id, right.id));
         }
       } catch {
         // The tabGroups permission is optional in a few Chromium variants.
@@ -1259,7 +1354,7 @@ export class BrowserStateEngine {
     });
   }
 
-  private async moveTabsToWorkspace(tabIds: string[], workspaceId: string, strict = false): Promise<string[]> {
+  private async moveTabsToWorkspace(tabIds: readonly string[], workspaceId: string, rollback?: NativeRollbackScope): Promise<string[]> {
     const workspace = this.state.workspaces.find((item) => item.id === workspaceId);
     if (!workspace) throw new Error(tr("error.workspaceNotFound"));
     const targetWindow = this.state.windows.find((item) => item.key === workspace.windowKey);
@@ -1276,13 +1371,13 @@ export class BrowserStateEngine {
         await this.moveNativeTabToWindow(nativeId, targetWindow.nativeId);
         moved.push(tabId);
       } catch {
-        if (strict) throw new Error(tr("error.moveTabFailed", { id: tabId }));
+        if (rollback) throw new Error(tr("error.moveTabFailed", { id: tabId }));
         // Manual operations may continue when one stale/closed tab disappears.
       }
     }
     const nativeIds = moved.map((id) => this.toNativeId(id)).filter((id): id is number => id !== undefined);
     if (nativeIds.length > 0 && this.api) {
-      await this.createOrUseNativeGroup(nativeIds.map(String), targetWindow.nativeId, workspace);
+      await this.createOrUseNativeGroup(nativeIds.map(String), targetWindow.nativeId, workspace, rollback);
     }
     for (const tabId of moved) {
       const tab = this.state.tabs.find((item) => item.id === tabId);
@@ -1367,15 +1462,16 @@ export class BrowserStateEngine {
     }
   }
 
-  private async moveNativeTabToWindow(nativeTabId: number, targetWindowId: number): Promise<void> {
+  private async moveNativeTabToWindow(nativeTabId: number, targetWindowId: number, index = -1): Promise<void> {
     if (!this.api) return;
-    await invokeBrowser(this.api.tabs, "move", nativeTabId, { windowId: targetWindowId, index: -1 });
+    await invokeBrowser(this.api.tabs, "move", nativeTabId, { windowId: targetWindowId, index });
   }
 
   private async createOrUseNativeGroup(
     tabIds: string[],
     targetWindowId: number,
-    workspace: Workspace
+    workspace: Workspace,
+    rollback?: NativeRollbackScope
   ): Promise<number> {
     if (!this.api) throw new Error(translate(getAppLanguage(), "browser.unavailable"));
     const nativeIds = tabIds.map((id) => this.toNativeId(id)).filter((id): id is number => id !== undefined);
@@ -1384,6 +1480,7 @@ export class BrowserStateEngine {
     if (groupId !== undefined) {
       try {
         await invokeBrowser(this.api.tabs, "group", { tabIds: nativeIds, groupId });
+        return groupId;
       } catch {
         groupId = undefined;
       }
@@ -1397,6 +1494,7 @@ export class BrowserStateEngine {
     }
     if (!Number.isInteger(groupId) || groupId < 0) throw new Error(tr("browser.invalidGroupId"));
     workspace.groupId = groupId;
+    rollback?.createdGroups.set(groupId, workspace.id);
     if (this.api.tabGroups?.update) {
       await invokeBrowser(this.api.tabGroups, "update", groupId, {
         title: workspace.name,
@@ -1453,6 +1551,14 @@ export class BrowserStateEngine {
   }
 }
 
+function isManagedNativeWindow(window: NativeWindowLike | undefined): window is ManagedNativeWindow {
+  return window?.id !== undefined && window.incognito !== true && (!window.type || window.type === "normal");
+}
+
+function isTabInNativeWindow(tab: NativeTabLike, windowId: number): boolean {
+  return tab.incognito !== true && (tab.windowId === undefined || tab.windowId === windowId);
+}
+
 function tryGetBrowserApi(): BrowserLike | undefined {
   try {
     return getBrowserApi();
@@ -1478,16 +1584,4 @@ function normalizeSnapshot(snapshot: StateSnapshot): StateSnapshot {
     })),
     tabs: [...snapshot.tabs].sort(compareTab).map((tab) => ({ ...tab }))
   };
-}
-
-function compareWindow(left: WindowState, right: WindowState): number {
-  return left.order - right.order || left.nativeId - right.nativeId;
-}
-
-function compareWorkspace(left: Workspace, right: Workspace): number {
-  return left.windowKey.localeCompare(right.windowKey) || left.order - right.order || left.id.localeCompare(right.id);
-}
-
-function compareTab(left: TabRecord, right: TabRecord): number {
-  return left.windowKey.localeCompare(right.windowKey) || left.index - right.index || left.id.localeCompare(right.id);
 }

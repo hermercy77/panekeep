@@ -27,7 +27,7 @@ PaneKeep 是一款本地优先的浏览器标签工作区扩展。开发者不�
 AI 功能默认由用户配置，并且只在你主动测试连接或生成整理预览时调用：
 
 - 测试连接会把 API Key 发送给你选择的 AI 服务商，并请求其模型列表；
-- 生成整理预览会把所选标签的标题、网址和域名，以及现有工作区的名称、描述和标签发送给你选择的 AI 服务商；
+- 生成整理预览会把所选标签的标题、网址（仅域名和路径，自动移除查询参数、片段与 URL 凭据）和域名，以及现有工作区的名称、描述和标签发送给你选择的 AI 服务商；
 - 不会发送 Cookie、密码、表单数据或网页正文；
 - API Key 会作为认证信息随请求直接发送给所选服务商；
 - 开发者不代理、接收或保存这些请求。
@@ -87,7 +87,7 @@ Workspace and tab metadata is stored in the extension's IndexedDB database. AI c
 AI is configured by the user and is contacted only when you deliberately test a connection or generate an organization preview:
 
 - A connection test sends the API key to the selected AI provider and requests its model list;
-- Generating an organization preview sends selected tab titles, URLs, and domains plus existing workspace names, descriptions, and tags to the selected AI provider;
+- Generating an organization preview sends selected tab titles, URLs (origin and pathname only; query strings, fragments, and URL credentials are stripped), and domains plus existing workspace names, descriptions, and tags to the selected AI provider;
 - Cookies, passwords, form data, and page contents are not sent;
 - The API key is sent directly to the selected provider as request authentication;
 - The developer does not proxy, receive, or store these requests.

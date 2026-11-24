@@ -28,6 +28,23 @@ export function getBrowserApi(source?: BrowserLike): BrowserLike {
   return candidate;
 }
 
+export function isBrowserSignatureError(error: unknown): boolean {
+  const message = typeof error === "object" && error !== null && "message" in error
+    ? String(error.message)
+    : String(error);
+  return /no matching signature|invalid (?:method )?(?:signature|invocation)|(?:signature|invocation) mismatch/i.test(message)
+    || /too many arguments|unexpected number of arguments|expected (?:at (?:most|least) )?\d+ arguments?/i.test(message)
+    || /callbacks?(?: argument| parameter)? (?:(?:is|are) )?(?:required|not (?:a function|allowed|supported|accepted))/i.test(message)
+    || /(?:unexpected|invalid|missing) callback|(?:cannot|does not) accept (?:a )?callback/i.test(message);
+}
+
+export function getBrowserLastError(): Error | undefined {
+  const lastError = (globalThis as typeof globalThis & {
+    chrome?: { runtime?: { lastError?: { message?: string } } };
+  }).chrome?.runtime?.lastError;
+  return lastError ? new Error(lastError.message || translate(getAppLanguage(), "error.generic")) : undefined;
+}
+
 /** Invoke either a promise-style or callback-style WebExtension API method. */
 export async function invokeBrowser<T>(
   owner: Record<string, any> | undefined,
@@ -52,39 +69,16 @@ export async function invokeBrowser<T>(
       reject(error);
     };
     const callback = (value: T): void => {
-      const lastError = (globalThis as typeof globalThis & {
-        chrome?: { runtime?: { lastError?: { message?: string } } };
-      }).chrome?.runtime?.lastError;
-      if (lastError) {
-        fail(new Error(lastError.message || "Browser API call failed"));
+      const error = getBrowserLastError();
+      if (error) fail(error);
+      else finish(value);
+    };
+    const retryWithoutCallback = (error: unknown): void => {
+      if (settled) return;
+      if (!isBrowserSignatureError(error)) {
+        fail(error);
         return;
       }
-      finish(value);
-    };
-
-    try {
-      const result = method.call(owner, ...args, callback);
-      if (result && typeof result.then === "function") {
-        result.then(finish, (error: unknown) => {
-          // Some implementations reject when a callback is supplied. Retry
-          // once in their native promise form.
-          if (settled) return;
-          try {
-            const retry = method.call(owner, ...args);
-            if (retry && typeof retry.then === "function") retry.then(finish, fail);
-            else if (retry !== undefined) finish(retry as T);
-            else fail(error);
-          } catch (retryError) {
-            fail(retryError);
-          }
-        });
-      } else if (result !== undefined) {
-        finish(result as T);
-      }
-      // A callback API resolves through finish. An API that returns undefined
-      // without invoking its callback is considered failed after its own
-      // implementation reports an error; there is no safe second mutation.
-    } catch (error) {
       try {
         const retry = method.call(owner, ...args);
         if (retry && typeof retry.then === "function") retry.then(finish, fail);
@@ -93,6 +87,17 @@ export async function invokeBrowser<T>(
       } catch (retryError) {
         fail(retryError);
       }
+    };
+
+    try {
+      const result = method.call(owner, ...args, callback);
+      if (result && typeof result.then === "function") {
+        result.then(finish, retryWithoutCallback);
+      } else if (result !== undefined) {
+        finish(result as T);
+      }
+    } catch (error) {
+      retryWithoutCallback(error);
     }
   });
 }

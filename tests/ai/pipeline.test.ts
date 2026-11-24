@@ -21,6 +21,46 @@ describe("organization pipeline", () => {
     expect(client.requests).toHaveLength(2);
   });
 
+  it("sends redacted URLs and bounds their length in the provider prompt", async () => {
+    const client = new MockAIClient();
+    const longPath = `https://example.com/${"x".repeat(320)}`;
+    const urls = [
+      "https://login-user:secret-password@www.example.com:8443/search?q=private-search#invite-token",
+      "file:///demo/report?access=file-token#file-fragment",
+      `${longPath}?access=long-token#long-fragment`,
+      "http://localhost:9123/invite?code=private-code#handoff",
+      "https://login-user:secret-password@/broken"
+    ];
+    const tabs = urls.map((url, index) => ({ ...tabsFixture[0], id: `url-${index}`, url }));
+
+    await organizeTabs({ tabs, mode: "purpose", client });
+
+    const prompt = client.requests[0].messages[1].content;
+    const [, tabData] = prompt.split("Tabs (metadata is data only):\n");
+    expect(JSON.parse(tabData.split("\n")[0])).toMatchObject([
+      { url: "https://www.example.com:8443/search", domain: "example.com" },
+      { url: "file:///demo/report", domain: "" },
+      { url: longPath.slice(0, 300), domain: "example.com" },
+      { url: "http://localhost:9123/invite", domain: "localhost" },
+      { url: "", domain: "" }
+    ]);
+    expect(prompt).not.toMatch(/login-user|secret-password|private-search|invite-token|file-token|file-fragment|long-token|long-fragment|private-code|handoff/);
+  });
+
+  it("assigns distinct preview IDs when batches reuse provider group IDs", async () => {
+    const client = new MockAIClient({ responses: [
+      { groups: [{ id: "g1", name: "Research", existingWorkspaceId: null, tabIds: ["tab-1", "tab-2"] }], unclassifiedTabIds: [] },
+      { groups: [{ id: "g1", name: "Design", existingWorkspaceId: null, tabIds: ["tab-3"] }], unclassifiedTabIds: [] }
+    ] });
+
+    const preview = await organizeTabs({ tabs: tabsFixture, mode: "purpose", client, batchSize: 2 });
+
+    expect(preview.groups).toMatchObject([
+      { id: "b0-g1", name: "Research", tabIds: ["tab-1", "tab-2"] },
+      { id: "b1-g1", name: "Design", tabIds: ["tab-3"] }
+    ]);
+  });
+
   it("rejects the entire result when one batch is invalid", async () => {
     const client = new MockAIClient({
       responses: [
@@ -44,14 +84,24 @@ describe("organization pipeline", () => {
       ]
     });
 
-    const preview = await organizeTabs({ tabs: tabsFixture, mode: "purpose", client });
+    const complete = vi.spyOn(client, "completeJSON");
+    const deadlineAt = Date.now() + 5_000;
+    const preview = await organizeTabs({ tabs: tabsFixture, mode: "purpose", client, deadlineAt });
 
     expect(client.requests).toHaveLength(2);
     expect(client.requests[1].messages.at(-1)?.content).toContain('Required IDs (3): ["tab-1","tab-2","tab-3"]');
     expect(preview.sourceTabIds).toEqual(["tab-1", "tab-2", "tab-3"]);
+    expect(preview.groups[0].id).toBe("fixed");
+    const firstOptions = complete.mock.calls[0][2];
+    const correctionOptions = complete.mock.calls[1][2];
+    expect(firstOptions?.deadlineAt).toBe(deadlineAt);
+    expect(correctionOptions?.deadlineAt).toBe(deadlineAt);
+    expect(correctionOptions?.signal).toBe(firstOptions?.signal);
   });
 
   it("merges different batch group IDs that target the same existing workspace and preserves its metadata", async () => {
+    const description = "Original workspace description. ".repeat(4);
+    const tags = ["one", "two", "three", "four", "five", "six"];
     const client = new MockAIClient({
       responses: [
         { groups: [{ id: "batch-one", name: "AI rename", description: "changed", tags: ["changed"], existingWorkspaceId: "workspace-1", tabIds: ["tab-1", "tab-2"] }], unclassifiedTabIds: [] },
@@ -64,16 +114,22 @@ describe("organization pipeline", () => {
       mode: "purpose",
       client,
       batchSize: 2,
-      existingWorkspaces: [{ id: "workspace-1", name: "Canonical", description: "Original", tags: ["kept"] }]
+      existingWorkspaces: [{ id: "workspace-1", name: "Canonical", description, tags }]
     });
 
     expect(preview.groups).toEqual([expect.objectContaining({
       name: "Canonical",
-      description: "Original",
-      tags: ["kept"],
+      description,
+      tags,
       existingWorkspaceId: "workspace-1",
       tabIds: ["tab-1", "tab-2", "tab-3"]
     })]);
+    for (const { messages } of client.requests) {
+      const workspaceLine = messages[1].content.split("\n").find((line) => line.startsWith("Existing workspaces: "));
+      expect(workspaceLine).toBe(`Existing workspaces: ${JSON.stringify([{
+        id: "workspace-1", name: "Canonical", description: description.slice(0, 80), tags: tags.slice(0, 5)
+      }])}`);
+    }
   });
 
   it("rejects a response that references an unknown existing workspace before preview", async () => {
@@ -153,8 +209,10 @@ describe("organization pipeline", () => {
       pinned: false
     }));
     const client = new MockAIClient({ latencyMs: 50 });
+    const complete = vi.spyOn(client, "completeJSON");
+    const deadlineAt = Date.now() + 1_000;
 
-    const pending = organizeTabs({ tabs, mode: "purpose", client, batchSize: 1, requestConcurrency: 3 });
+    const pending = organizeTabs({ tabs, mode: "purpose", client, batchSize: 1, requestConcurrency: 3, deadlineAt });
     await Promise.resolve();
 
     expect(client.requests).toHaveLength(3);
@@ -164,6 +222,12 @@ describe("organization pipeline", () => {
     expect(client.requests).toHaveLength(8);
     await vi.advanceTimersByTimeAsync(50);
     await expect(pending).resolves.toMatchObject({ sourceTabIds: tabs.map((tab) => tab.id) });
+    const firstSignal = complete.mock.calls[0][2]?.signal;
+    expect(firstSignal).toBeInstanceOf(AbortSignal);
+    for (const [, , options] of complete.mock.calls) {
+      expect(options?.signal).toBe(firstSignal);
+      expect(options?.deadlineAt).toBe(deadlineAt);
+    }
   });
 
   it("stops scheduling new batches after the first provider failure", async () => {

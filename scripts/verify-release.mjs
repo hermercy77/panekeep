@@ -43,6 +43,7 @@ for (const browser of ["chrome", "edge"]) {
   assert(manifest.manifest_version === 3, `${browser} manifest must use MV3`);
   assert(manifest.version === packageJson.version, `${browser} version must match package.json`);
   assert(manifest.name === "__MSG_extensionName__", `${browser} name must be localized`);
+  assert(manifest.incognito === "not_allowed", `${browser} manifest must disable incognito access`);
   assert(JSON.stringify(manifest.permissions) === JSON.stringify(expectedPermissions), `${browser} permissions changed without release review`);
   assert(JSON.stringify(manifest.optional_host_permissions) === JSON.stringify(expectedOptionalHosts), `${browser} optional hosts changed without release review`);
   for (const size of iconSizes) {

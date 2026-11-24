@@ -13,6 +13,7 @@ export interface UsePaneKeepStateResult {
   snapshot: PaneKeepSnapshot;
   status: UiLoadState;
   error: string | null;
+  getLastError: () => string | null;
   refresh: () => Promise<void>;
   clearError: () => void;
   createWorkspace: (draft: WorkspaceDraft) => Promise<Workspace | null>;
@@ -24,7 +25,10 @@ export interface UsePaneKeepStateResult {
   previewWorkspaceMerge: (sourceWorkspaceId: string, targetWorkspaceId: string) => Promise<WorkspaceMergePreview | null>;
   mergeWorkspaces: (preview: WorkspaceMergePreview) => Promise<boolean>;
   activateTab: (tabId: string) => Promise<boolean>;
-  requestOrganization: (mode: OrganizationMode, tabIds?: string[]) => Promise<OrganizationPreview | null>;
+  closeTabs: (tabIds: string[]) => Promise<{ closedTabIds: string[]; skippedTabIds: string[] } | null>;
+  setTabPinned: (tabId: string, pinned: boolean) => Promise<boolean>;
+  requestOrganization: (mode: OrganizationMode, tabIds?: string[], expectedOrigin?: string) => Promise<OrganizationPreview | null>;
+  cancelOrganization: () => Promise<void>;
   applyOrganization: (preview: OrganizationPreview) => Promise<boolean>;
   exportBackup: () => Promise<string | null>;
   importBackup: (json: string) => Promise<BackupImportResult | null>;
@@ -39,20 +43,26 @@ export function usePaneKeepState(adapter?: PaneKeepAdapter): UsePaneKeepStateRes
   const [snapshot, setSnapshot] = useState<PaneKeepSnapshot>(emptySnapshot);
   const [status, setStatus] = useState<UiLoadState>("loading");
   const [error, setError] = useState<string | null>(null);
+  const lastErrorRef = useRef<string | null>(null);
+  const snapshotVersionRef = useRef(0);
   const mounted = useRef(true);
 
   const refresh = useCallback(async () => {
     setStatus("loading");
     setError(null);
+    lastErrorRef.current = null;
     try {
       const next = await stableAdapter.getSnapshot();
       if (!mounted.current) return;
+      snapshotVersionRef.current += 1;
       setSnapshot(next);
       setStatus("ready");
     } catch (cause) {
       if (!mounted.current) return;
+      const message = errorMessage(cause);
+      lastErrorRef.current = message;
       setStatus("error");
-      setError(errorMessage(cause));
+      setError(message);
     }
   }, [stableAdapter]);
 
@@ -61,6 +71,7 @@ export function usePaneKeepState(adapter?: PaneKeepAdapter): UsePaneKeepStateRes
     void refresh();
     const unsubscribe = stableAdapter.subscribe?.((next) => {
       if (mounted.current) {
+        snapshotVersionRef.current += 1;
         setSnapshot(next);
         setStatus("ready");
       }
@@ -72,22 +83,34 @@ export function usePaneKeepState(adapter?: PaneKeepAdapter): UsePaneKeepStateRes
   }, [refresh, stableAdapter]);
 
   const run = useCallback(
-    async <T,>(operation: () => Promise<T>, result: (value: T) => void): Promise<boolean> => {
-      setError(null);
+    async <T,>(
+      operation: () => Promise<T>,
+      result: (value: T) => void,
+      options: { reportGlobalError?: boolean; refreshAfter?: boolean } = {}
+    ): Promise<boolean> => {
+      const reportGlobalError = options.reportGlobalError ?? true;
+      const refreshAfter = options.refreshAfter ?? true;
+      const versionBefore = snapshotVersionRef.current;
+      lastErrorRef.current = null;
+      if (reportGlobalError) setError(null);
       try {
         const value = await operation();
         if (!mounted.current) return false;
         result(value);
-        const next = await stableAdapter.getSnapshot();
-        if (mounted.current) {
-          setSnapshot(next);
-          setStatus("ready");
+        if (refreshAfter && snapshotVersionRef.current === versionBefore) {
+          const next = await stableAdapter.getSnapshot();
+          if (mounted.current) {
+            snapshotVersionRef.current += 1;
+            setSnapshot(next);
+            setStatus("ready");
+          }
         }
         return true;
       } catch (cause) {
-        if (mounted.current) {
-          setStatus("error");
-          setError(errorMessage(cause));
+        const message = errorMessage(cause);
+        lastErrorRef.current = message;
+        if (mounted.current && reportGlobalError) {
+          setError(message);
         }
         return false;
       }
@@ -152,35 +175,59 @@ export function usePaneKeepState(adapter?: PaneKeepAdapter): UsePaneKeepStateRes
       let preview: WorkspaceMergePreview | null = null;
       const ok = await run(
         () => stableAdapter.previewWorkspaceMerge(sourceWorkspaceId, targetWorkspaceId),
-        (value) => { preview = value; }
+        (value) => { preview = value; },
+        { reportGlobalError: false }
       );
       return ok ? preview : null;
     },
     [run, stableAdapter]
   );
   const mergeWorkspaces = useCallback(
-    (preview: WorkspaceMergePreview) => run(() => stableAdapter.mergeWorkspaces(preview), () => undefined),
+    (preview: WorkspaceMergePreview) => run(() => stableAdapter.mergeWorkspaces(preview), () => undefined, { reportGlobalError: false }),
     [run, stableAdapter]
   );
   const activateTab = useCallback(
     (tabId: string) => run(() => stableAdapter.activateTab(tabId), () => undefined),
     [run, stableAdapter]
   );
+  const closeTabs = useCallback(
+    async (tabIds: string[]) => {
+      if (!stableAdapter.closeTabs) return null;
+      let outcome: { closedTabIds: string[]; skippedTabIds: string[] } | null = null;
+      const ok = await run(
+        () => stableAdapter.closeTabs!(tabIds),
+        (value) => { outcome = value; }
+      );
+      return ok ? outcome : null;
+    },
+    [run, stableAdapter]
+  );
+  const setTabPinned = useCallback(
+    (tabId: string, pinned: boolean) => {
+      if (!stableAdapter.setTabPinned) return Promise.resolve(false);
+      return run(() => stableAdapter.setTabPinned!(tabId, pinned), () => undefined);
+    },
+    [run, stableAdapter]
+  );
   const requestOrganization = useCallback(
-    async (mode: OrganizationMode, tabIds?: string[]) => {
+    async (mode: OrganizationMode, tabIds?: string[], expectedOrigin?: string) => {
       let preview: OrganizationPreview | null = null;
       const ok = await run(
-        async () => stableAdapter.requestOrganization(mode, tabIds),
+        async () => stableAdapter.requestOrganization(mode, tabIds, expectedOrigin),
         (value) => {
           preview = value;
-        }
+        },
+        { reportGlobalError: false, refreshAfter: false }
       );
       return ok ? preview : null;
     },
     [run, stableAdapter]
   );
+  const cancelOrganization = useCallback(async () => {
+    await stableAdapter.cancelOrganization?.();
+  }, [stableAdapter]);
   const applyOrganization = useCallback(
-    (preview: OrganizationPreview) => run(() => stableAdapter.applyOrganization(preview), () => undefined),
+    (preview: OrganizationPreview) => run(() => stableAdapter.applyOrganization(preview), () => undefined, { reportGlobalError: false }),
     [run, stableAdapter]
   );
   const exportBackup = useCallback(async () => {
@@ -206,8 +253,12 @@ export function usePaneKeepState(adapter?: PaneKeepAdapter): UsePaneKeepStateRes
     snapshot,
     status,
     error,
+    getLastError: () => lastErrorRef.current,
     refresh,
-    clearError: () => setError(null),
+    clearError: () => {
+      lastErrorRef.current = null;
+      setError(null);
+    },
     createWorkspace,
     updateWorkspace,
     deleteWorkspace,
@@ -217,7 +268,10 @@ export function usePaneKeepState(adapter?: PaneKeepAdapter): UsePaneKeepStateRes
     previewWorkspaceMerge,
     mergeWorkspaces,
     activateTab,
+    closeTabs,
+    setTabPinned,
     requestOrganization,
+    cancelOrganization,
     applyOrganization
     ,exportBackup
     ,importBackup

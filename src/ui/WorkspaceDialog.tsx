@@ -7,6 +7,7 @@ import { WORKSPACE_COLOR_OPTIONS } from "./workspaceColors";
 import { useI18n } from "../i18n/react";
 import { WORKSPACE_ICON_KEYS, normalizeWorkspaceIcon, type WorkspaceIconKey } from "../shared/workspaceAppearance";
 import { WorkspaceIcon } from "./WorkspaceIcon";
+import { Modal } from "./Modal";
 
 const ICON_LABEL_KEYS = {
   folder: "icon.folder",
@@ -83,15 +84,14 @@ export function WorkspaceDialog({ open, windowKey, workspace, busy = false, onCl
   };
 
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="dialog-card" role="dialog" aria-modal="true" aria-labelledby="workspace-dialog-title">
-        <div className="dialog-heading">
-          <h2 id="workspace-dialog-title">{title}</h2>
-          <button className="icon-button" type="button" onClick={onClose} aria-label={t("common.close")}>
-            <X aria-hidden="true" size={18} />
-          </button>
-        </div>
-        <form onSubmit={submit}>
+    <Modal open={open} onClose={onClose} canClose={!busy} labelledBy="workspace-dialog-title">
+      <div className="dialog-heading">
+        <h2 id="workspace-dialog-title">{title}</h2>
+        <button className="icon-button" type="button" onClick={onClose} aria-label={t("common.close")} disabled={busy}>
+          <X aria-hidden="true" size={18} />
+        </button>
+      </div>
+      <form onSubmit={submit}>
           <label className="field-label" htmlFor="workspace-name">
             {t("workspace.name")} <span>*</span>
           </label>
@@ -179,7 +179,6 @@ export function WorkspaceDialog({ open, windowKey, workspace, busy = false, onCl
             </button>
           </div>
         </form>
-      </section>
-    </div>
+    </Modal>
   );
 }

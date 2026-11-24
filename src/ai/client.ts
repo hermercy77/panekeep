@@ -368,13 +368,13 @@ export class OpenAICompatibleClient implements AIClient {
           requestBody = fallbackBody;
           continue;
         }
-        if ("max_tokens" in requestBody && /max[_ .-]?tokens|max(?:imum)? tokens|completion tokens/i.test(error.message)) {
+        if (!isAnthropic && "max_tokens" in requestBody && /max[_ .-]?tokens|max(?:imum)? tokens|completion tokens/i.test(error.message)) {
           const { max_tokens, ...fallbackBody } = requestBody;
           this.outputTokenField = "max_completion_tokens";
           requestBody = { ...fallbackBody, max_completion_tokens: max_tokens };
           continue;
         }
-        if ("max_completion_tokens" in requestBody && /max[_ .-]?completion[_ .-]?tokens|max(?:imum)? completion tokens/i.test(error.message)) {
+        if (!isAnthropic && "max_completion_tokens" in requestBody && /max[_ .-]?completion[_ .-]?tokens|max(?:imum)? completion tokens/i.test(error.message)) {
           const { max_completion_tokens: _unsupported, ...fallbackBody } = requestBody;
           this.outputTokenField = "unsupported";
           requestBody = fallbackBody;

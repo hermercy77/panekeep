@@ -1,7 +1,8 @@
-import { aiConfigSchema, type AIConfig } from "../shared/contracts";
+import { aiConfigSchema, aiProfileSchema, aiSettingsSchema, type AIConfig, type AIProfile, type AISettings } from "../shared/contracts";
 import { AIConfigError } from "./errors";
 import { getAppLanguage, translate } from "../i18n";
-import { inferAIProviderId } from "./providers";
+import { getAIProviderPreset, inferAIProviderId } from "./providers";
+import { getBrowserLastError, isBrowserSignatureError } from "../browser/api";
 
 export const DEFAULT_AI_CONFIG: AIConfig = {
   providerId: "openai",
@@ -12,6 +13,7 @@ export const DEFAULT_AI_CONFIG: AIConfig = {
 
 /** The legacy key is kept for seamless upgrades and stays in storage.local, never storage.sync. */
 export const AI_CONFIG_STORAGE_KEY = "tab-fridge.ai-config";
+export const AI_SETTINGS_STORAGE_KEY = "tab-fridge.ai-settings";
 
 export interface StorageAreaLike {
   get(
@@ -29,6 +31,13 @@ export interface AIConfigStore {
   load(): Promise<AIConfig>;
   save(config: Partial<AIConfig>): Promise<AIConfig>;
   clear(): Promise<void>;
+  loadSettings(): Promise<AISettings>;
+  saveProfile(
+    profile: Partial<AIProfile>,
+    options?: { activate?: boolean }
+  ): Promise<{ settings: AISettings; profile: AIProfile }>;
+  setActiveProfile(profileId: string): Promise<AISettings>;
+  deleteProfile(profileId: string): Promise<AISettings>;
 }
 
 function stripTrailingSlashes(value: string): string {
@@ -91,61 +100,29 @@ function getChromeLocalStorage(): StorageAreaLike | undefined {
   return candidate.chrome?.storage?.local;
 }
 
-async function storageGet(storage: StorageAreaLike, keys: string | string[]): Promise<Record<string, unknown>> {
+async function invokeStorage<T>(invoke: (callback?: (value: T) => void) => Promise<T> | void): Promise<T> {
   try {
-    const result = storage.get(keys);
-    if (result && typeof (result as Promise<Record<string, unknown>>).then === "function") {
-      return await result;
-    }
-  } catch {
-    // Older callback-only implementations are handled below.
+    const result = invoke();
+    if (result !== undefined) return await result;
+  } catch (error) {
+    if (!isBrowserSignatureError(error)) throw error;
   }
-  return new Promise<Record<string, unknown>>((resolve, reject) => {
-    try {
-      storage.get(keys, (items) => resolve(items));
-    } catch (error) {
-      reject(error);
-    }
+  return new Promise<T>((resolve, reject) => {
+    const result = invoke((value) => {
+      const error = getBrowserLastError();
+      if (error) reject(error);
+      else resolve(value);
+    });
+    if (result !== undefined) void result.then(resolve, reject);
   });
 }
 
-async function storageSet(storage: StorageAreaLike, items: Record<string, unknown>): Promise<void> {
-  try {
-    const result = storage.set(items);
-    if (result && typeof (result as Promise<void>).then === "function") {
-      await result;
-      return;
-    }
-  } catch {
-    // Older callback-only implementations are handled below.
-  }
-  await new Promise<void>((resolve, reject) => {
-    try {
-      storage.set(items, () => resolve());
-    } catch (error) {
-      reject(error);
-    }
-  });
+function storageGet(storage: StorageAreaLike, keys: string | string[]): Promise<Record<string, unknown>> {
+  return invokeStorage((callback) => callback ? storage.get(keys, callback) : storage.get(keys));
 }
 
-async function storageRemove(storage: StorageAreaLike, keys: string | string[]): Promise<void> {
-  if (!storage.remove) return;
-  try {
-    const result = storage.remove(keys);
-    if (result && typeof (result as Promise<void>).then === "function") {
-      await result;
-      return;
-    }
-  } catch {
-    // Older callback-only implementations are handled below.
-  }
-  await new Promise<void>((resolve, reject) => {
-    try {
-      storage.remove?.(keys, () => resolve());
-    } catch (error) {
-      reject(error);
-    }
-  });
+function storageSet(storage: StorageAreaLike, items: Record<string, unknown>): Promise<void> {
+  return invokeStorage((callback) => callback ? storage.set(items, callback) : storage.set(items));
 }
 
 class InMemoryStorageArea implements StorageAreaLike {
@@ -187,6 +164,50 @@ function defaultStorage(): StorageAreaLike {
   return defaultMemoryStorage;
 }
 
+function makeProfileId(): string {
+  const randomUuid = globalThis.crypto?.randomUUID?.();
+  return randomUuid ? `ai-profile-${randomUuid}` : `ai-profile-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+export function defaultAIProfileName(config: Pick<AIConfig, "providerId" | "baseUrl" | "model">): string {
+  const preset = getAIProviderPreset(config.providerId);
+  const providerLabel = preset
+    ? translate(getAppLanguage(), preset.nameKey)
+    : (() => {
+        try {
+          return new URL(config.baseUrl).hostname || translate(getAppLanguage(), "manage.providerCustom");
+        } catch {
+          return translate(getAppLanguage(), "manage.providerCustom");
+        }
+      })();
+  return config.model.trim() ? `${providerLabel} · ${config.model.trim()}` : providerLabel;
+}
+
+export function normalizeAIProfile(profile: Partial<AIProfile> = {}): AIProfile {
+  const base = normalizeAIConfig(profile);
+  const id = String(profile.id ?? "").trim() || makeProfileId();
+  const name = String(profile.name ?? "").trim() || defaultAIProfileName(base);
+  return aiProfileSchema.parse({ ...base, id, name });
+}
+
+function toAIConfig(profile: AIProfile): AIConfig {
+  return {
+    providerId: profile.providerId,
+    baseUrl: profile.baseUrl,
+    apiKey: profile.apiKey,
+    model: profile.model
+  };
+}
+
+function hasMeaningfulConfig(config: AIConfig): boolean {
+  return Boolean(
+    config.apiKey.trim()
+    || config.model.trim()
+    || config.providerId !== DEFAULT_AI_CONFIG.providerId
+    || config.baseUrl !== DEFAULT_AI_CONFIG.baseUrl
+  );
+}
+
 export class LocalAIConfigStore implements AIConfigStore {
   constructor(private readonly storage: StorageAreaLike = defaultStorage()) {}
 
@@ -206,11 +227,102 @@ export class LocalAIConfigStore implements AIConfigStore {
   }
 
   async clear(): Promise<void> {
-    if (this.storage.remove) {
-      await storageRemove(this.storage, AI_CONFIG_STORAGE_KEY);
+    const { remove } = this.storage;
+    if (remove) {
+      await invokeStorage<void>((callback) => callback
+        ? remove.call(this.storage, AI_CONFIG_STORAGE_KEY, callback)
+        : remove.call(this.storage, AI_CONFIG_STORAGE_KEY));
       return;
     }
     await this.save(DEFAULT_AI_CONFIG);
+  }
+
+  async loadSettings(): Promise<AISettings> {
+    const items = await storageGet(this.storage, [AI_SETTINGS_STORAGE_KEY, AI_CONFIG_STORAGE_KEY]);
+    const rawSettings = items[AI_SETTINGS_STORAGE_KEY];
+    if (rawSettings && typeof rawSettings === "object" && !Array.isArray(rawSettings)) {
+      const candidate = rawSettings as { activeProfileId?: unknown; profiles?: unknown };
+      const rawProfiles = Array.isArray(candidate.profiles) ? candidate.profiles : [];
+      const profiles: AIProfile[] = [];
+      const seenIds = new Set<string>();
+      for (const entry of rawProfiles) {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+        try {
+          const normalized = normalizeAIProfile(entry as Partial<AIProfile>);
+          if (seenIds.has(normalized.id)) continue;
+          seenIds.add(normalized.id);
+          profiles.push(normalized);
+        } catch {
+          // Drop corrupted profile entries rather than breaking the whole settings UI.
+        }
+      }
+      const requestedActive = typeof candidate.activeProfileId === "string" ? candidate.activeProfileId : null;
+      const activeProfileId = requestedActive && profiles.some((item) => item.id === requestedActive)
+        ? requestedActive
+        : profiles[0]?.id ?? null;
+      return aiSettingsSchema.parse({ activeProfileId, profiles });
+    }
+
+    const legacyRaw = items[AI_CONFIG_STORAGE_KEY];
+    if (legacyRaw && typeof legacyRaw === "object" && !Array.isArray(legacyRaw)) {
+      try {
+        const legacy = normalizeAIConfig(legacyRaw as Partial<AIConfig>);
+        if (hasMeaningfulConfig(legacy)) {
+          const migrated = normalizeAIProfile({ ...legacy, id: "ai-profile-default" });
+          return aiSettingsSchema.parse({ activeProfileId: migrated.id, profiles: [migrated] });
+        }
+      } catch {
+        // Ignore invalid legacy payload and return empty profiles.
+      }
+    }
+    return { activeProfileId: null, profiles: [] };
+  }
+
+  private async persistSettings(settings: AISettings): Promise<AISettings> {
+    const active = settings.profiles.find((item) => item.id === settings.activeProfileId) ?? settings.profiles[0] ?? null;
+    const nextSettings: AISettings = {
+      activeProfileId: active?.id ?? null,
+      profiles: settings.profiles
+    };
+    const activeConfig = active ? toAIConfig(active) : { ...DEFAULT_AI_CONFIG };
+    await storageSet(this.storage, {
+      [AI_SETTINGS_STORAGE_KEY]: nextSettings,
+      [AI_CONFIG_STORAGE_KEY]: activeConfig
+    });
+    return nextSettings;
+  }
+
+  async saveProfile(
+    profile: Partial<AIProfile>,
+    options: { activate?: boolean } = {}
+  ): Promise<{ settings: AISettings; profile: AIProfile }> {
+    const current = await this.loadSettings();
+    const normalized = normalizeAIProfile(profile);
+    const exists = current.profiles.some((item) => item.id === normalized.id);
+    const profiles = exists
+      ? current.profiles.map((item) => (item.id === normalized.id ? normalized : item))
+      : [...current.profiles, normalized];
+    const shouldActivate = options.activate ?? (!exists || current.activeProfileId === null || current.activeProfileId === normalized.id);
+    const activeProfileId = shouldActivate ? normalized.id : current.activeProfileId ?? normalized.id;
+    const settings = await this.persistSettings({ activeProfileId, profiles });
+    return { settings, profile: normalized };
+  }
+
+  async setActiveProfile(profileId: string): Promise<AISettings> {
+    const current = await this.loadSettings();
+    if (!current.profiles.some((item) => item.id === profileId)) {
+      throw new AIConfigError(translate(getAppLanguage(), "ai.invalidConfig"));
+    }
+    return this.persistSettings({ ...current, activeProfileId: profileId });
+  }
+
+  async deleteProfile(profileId: string): Promise<AISettings> {
+    const current = await this.loadSettings();
+    const profiles = current.profiles.filter((item) => item.id !== profileId);
+    const activeProfileId = current.activeProfileId === profileId
+      ? profiles[0]?.id ?? null
+      : current.activeProfileId;
+    return this.persistSettings({ activeProfileId, profiles });
   }
 }
 
