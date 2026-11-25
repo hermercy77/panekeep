@@ -9,7 +9,6 @@ import { useI18n } from "../i18n/react";
 import { WorkspaceMergeDialog } from "./WorkspaceMergeDialog";
 import { DeleteWorkspaceDialog } from "./DeleteWorkspaceDialog";
 import { createAIConfigStore } from "../ai/config";
-import { getAIProviderPreset } from "../ai/providers";
 import { ensureAIOriginPermission } from "../ai/permissions";
 import { BrandMark } from "./BrandMark";
 
@@ -111,7 +110,6 @@ export function SidePanelApp() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiApplying, setAiApplying] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
-  const [aiDestination, setAiDestination] = useState("");
   const [aiExpectedOrigin, setAiExpectedOrigin] = useState<string | undefined>(undefined);
   const [aiProfiles, setAiProfiles] = useState<AIProfile[]>([]);
   const [activeAiProfileId, setActiveAiProfileId] = useState<string | null>(null);
@@ -270,17 +268,12 @@ export function SidePanelApp() {
     } else setMergeError(state.getLastError() ?? t("error.mergeStateChanged"));
   };
 
-  const applyAiDestination = (config: { providerId: string; baseUrl: string }) => {
-    const preset = getAIProviderPreset(config.providerId);
-    let origin = config.baseUrl;
+  const applyAiExpectedOrigin = (config: { baseUrl: string }) => {
     let parsedOrigin: string | undefined;
     try {
       parsedOrigin = new URL(config.baseUrl).origin;
-      origin = parsedOrigin;
-    } catch { /* keep configured value */ }
+    } catch { /* keep undefined */ }
     setAiExpectedOrigin(parsedOrigin);
-    const provider = preset ? t(preset.nameKey) : t("manage.providerCustom");
-    setAiDestination(origin ? `${provider} (${origin})` : provider);
   };
 
   const openAi = () => {
@@ -292,13 +285,12 @@ export function SidePanelApp() {
       setAiProfiles(settings.profiles);
       setActiveAiProfileId(settings.activeProfileId);
       const active = settings.profiles.find((item) => item.id === settings.activeProfileId);
-      if (active) applyAiDestination(active);
-      else applyAiDestination(await store.load());
+      if (active) applyAiExpectedOrigin(active);
+      else applyAiExpectedOrigin(await store.load());
     }).catch(() => {
       setAiProfiles([]);
       setActiveAiProfileId(null);
       setAiExpectedOrigin(undefined);
-      setAiDestination(t("organize.configuredProvider"));
     });
   };
 
@@ -308,7 +300,7 @@ export function SidePanelApp() {
       setAiProfiles(settings.profiles);
       setActiveAiProfileId(settings.activeProfileId);
       const active = settings.profiles.find((item) => item.id === settings.activeProfileId);
-      if (active) applyAiDestination(active);
+      if (active) applyAiExpectedOrigin(active);
       setAiError(null);
     }).catch((error) => {
       setAiError(error instanceof Error ? error.message : t("notice.aiSaveFailed"));
@@ -325,10 +317,7 @@ export function SidePanelApp() {
       let currentOrigin: string | undefined;
       try { currentOrigin = new URL(config.baseUrl).origin; } catch { /* validated below */ }
       if (expectedOrigin && currentOrigin && expectedOrigin !== currentOrigin) {
-        const preset = getAIProviderPreset(config.providerId);
-        const provider = preset ? t(preset.nameKey) : t("manage.providerCustom");
         setAiExpectedOrigin(currentOrigin);
-        setAiDestination(`${provider} (${currentOrigin})`);
         setAiLoading(false);
         setAiError(t("error.browserChanged"));
         return;
@@ -565,7 +554,6 @@ export function SidePanelApp() {
       />
       <OrganizationDialog
         open={aiOpen}
-        destination={aiDestination}
         profiles={aiProfiles}
         activeProfileId={activeAiProfileId}
         onSelectProfile={selectAiProfile}

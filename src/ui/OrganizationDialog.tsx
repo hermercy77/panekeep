@@ -10,7 +10,6 @@ import { Modal } from "./Modal";
 
 interface OrganizationDialogProps {
   open: boolean;
-  destination?: string;
   profiles?: AIProfile[];
   activeProfileId?: string | null;
   onSelectProfile?: (profileId: string) => void;
@@ -29,7 +28,6 @@ interface OrganizationDialogProps {
 
 export function OrganizationDialog({
   open,
-  destination,
   profiles = [],
   activeProfileId = null,
   onSelectProfile,
@@ -223,9 +221,6 @@ export function OrganizationDialog({
               </select>
             </label>
           ) : null}
-          <p className="organization-disclosure" role="note">
-            {t("organize.dataDisclosure", { destination: destination || t("organize.configuredProvider") })}
-          </p>
           {error ? (
             <div className="inline-error-row" role="alert">
               <div className="inline-error">{error}</div>

@@ -27,7 +27,6 @@ describe("OrganizationDialog selection", () => {
     await act(async () => root.render(
       <OrganizationDialog
         open
-        destination="DeepSeek (https://api.deepseek.com)"
         tabs={groupedTabs}
         mode="purpose"
         preview={null}
@@ -46,8 +45,7 @@ describe("OrganizationDialog selection", () => {
     expect(host.textContent).toContain("按类型");
     expect(host.textContent).not.toContain("工作、研究、稍后阅读");
     expect(host.textContent).not.toContain("准备好整理你的标签了吗");
-    expect(host.textContent).toContain("DeepSeek (https://api.deepseek.com)");
-    expect(host.textContent).toContain("标题、网址和域名");
+    expect(host.textContent).not.toContain("标题、网址和域名");
     const selectAll = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "全选");
     const generate = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "生成预览");
     await act(async () => selectAll?.click());
